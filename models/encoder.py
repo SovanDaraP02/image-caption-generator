@@ -15,24 +15,40 @@ import torchvision
 
 
 class EncoderCNN(nn.Module):
-    def __init__(self, fine_tune: bool = False):
+    # All three are drop-in swaps: same 2048-channel output, so nothing
+    # downstream (attention_dim, decoder_dim, etc.) needs to change.
+    _BACKBONES = {
+        "resnet50": (torchvision.models.resnet50, "ResNet50_Weights", "IMAGENET1K_V2"),
+        "resnet101": (torchvision.models.resnet101, "ResNet101_Weights", "IMAGENET1K_V2"),
+        "resnet152": (torchvision.models.resnet152, "ResNet152_Weights", "IMAGENET1K_V2"),
+    }
+
+    def __init__(self, fine_tune: bool = False, pretrained: bool = True,
+                 backbone: str = "resnet50"):
         super().__init__()
+
+        if backbone not in self._BACKBONES:
+            raise ValueError(f"Unknown backbone '{backbone}', choose from {list(self._BACKBONES)}")
+        model_fn, weights_enum_name, weights_tag = self._BACKBONES[backbone]
 
         # Try pretrained ImageNet weights first (needs internet access to
         # download.pytorch.org -- works on Colab, may not work in an
         # offline sandbox). Falls back to random init so this module is
         # still importable/testable everywhere; training quality depends
         # on actually getting the pretrained weights, so check the
-        # printed message below.
-        try:
-            resnet = torchvision.models.resnet50(
-                weights=torchvision.models.ResNet50_Weights.IMAGENET1K_V2
-            )
-        except Exception as e:
-            print(f"[EncoderCNN] Could not download pretrained weights ({e}). "
-                  f"Falling back to random init -- fine for shape self-tests, "
-                  f"NOT fine for real training.")
-            resnet = torchvision.models.resnet50(weights=None)
+        # printed message below. Tests pass pretrained=False to skip the
+        # network call entirely and stay fast/deterministic in CI.
+        if pretrained:
+            try:
+                weights_enum = getattr(torchvision.models, weights_enum_name)
+                resnet = model_fn(weights=getattr(weights_enum, weights_tag))
+            except Exception as e:
+                print(f"[EncoderCNN] Could not download pretrained weights ({e}). "
+                      f"Falling back to random init -- fine for shape self-tests, "
+                      f"NOT fine for real training.")
+                resnet = model_fn(weights=None)
+        else:
+            resnet = model_fn(weights=None)
 
         # Strip the last two layers: adaptive avg pool + fc classifier.
         # Everything up to and including layer4 gives us the spatial

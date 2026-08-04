@@ -99,17 +99,29 @@ def main():
     criterion = nn.CrossEntropyLoss(ignore_index=pad_idx)
     optimizer = torch.optim.Adam(decoder.parameters(), lr=4e-4)
 
-    NUM_EPOCHS = 8  # 5-8 is enough in a 15-day timeline; don't chase 10+
+    # Halve the LR when val_loss stalls for 2 epochs -- on a dataset this
+    # small, a fixed LR for all 8+ epochs tends to overshoot once the
+    # decoder is past its first few epochs of easy gains.
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="min", factor=0.5, patience=2)
+
+    NUM_EPOCHS = 15  # early stopping below decides the real stopping point
+    EARLY_STOP_PATIENCE = 4  # epochs with no val_loss improvement before quitting
     best_val_loss = float("inf")
+    epochs_without_improvement = 0
 
     for epoch in range(1, NUM_EPOCHS + 1):
         train_loss = train_one_epoch(encoder, decoder, train_loader, optimizer,
                                       criterion, device, pad_idx)
         val_loss = validate(encoder, decoder, val_loader, criterion, device)
-        print(f"Epoch {epoch}/{NUM_EPOCHS}  train_loss={train_loss:.4f}  val_loss={val_loss:.4f}")
+        scheduler.step(val_loss)
+        current_lr = optimizer.param_groups[0]["lr"]
+        print(f"Epoch {epoch}/{NUM_EPOCHS}  train_loss={train_loss:.4f}  "
+              f"val_loss={val_loss:.4f}  lr={current_lr:.2e}")
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
+            epochs_without_improvement = 0
             torch.save({
                 "encoder_state": encoder.state_dict(),
                 "decoder_state": decoder.state_dict(),
@@ -117,6 +129,11 @@ def main():
                 "vocab_idx2word": vocab.idx2word,
             }, "best_checkpoint.pth")
             print(f"  -> saved new best checkpoint (val_loss={val_loss:.4f})")
+        else:
+            epochs_without_improvement += 1
+            if epochs_without_improvement >= EARLY_STOP_PATIENCE:
+                print(f"No val_loss improvement for {EARLY_STOP_PATIENCE} epochs -- stopping early.")
+                break
 
 
 if __name__ == "__main__":

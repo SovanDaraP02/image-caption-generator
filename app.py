@@ -63,7 +63,7 @@ uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
 if uploaded_file and model_loaded:
     image = Image.open(uploaded_file)
-    st.image(image, caption="Your image", use_column_width=True)
+    st.image(image, caption="Your image", use_container_width=True)
 
     decoding_mode = st.radio("Decoding strategy", ["Greedy", "Beam search (width 3)"])
 
