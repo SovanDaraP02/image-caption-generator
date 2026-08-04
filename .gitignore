@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# large/generated, regenerate via SETUP_DATA.md and train.py
+data/flickr8k/
+*.pth
+
+# OS
+.DS_Store
+
+# claude code local state
+.claude/

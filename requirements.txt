@@ -1,0 +1,11 @@
+torch>=2.2
+torchvision>=0.17
+pandas
+pillow
+nltk
+scikit-learn
+streamlit
+matplotlib
+scipy
+pycocoevalcap
+datasets
