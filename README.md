@@ -74,12 +74,15 @@ Evaluated on the Flickr8k test split (1,000 images, 5 reference captions each):
 
 | Metric | Score |
 |---|---|
-| BLEU-1 | _fill in after evaluate.py run_ |
-| BLEU-2 | |
-| BLEU-3 | |
-| BLEU-4 | |
-| METEOR | |
-| CIDEr | |
+| BLEU-1 | 0.5517 |
+| BLEU-2 | 0.3737 |
+| BLEU-3 | 0.2437 |
+| BLEU-4 | 0.1585 |
+| METEOR | 0.1953 |
+| CIDEr | 0.4521 |
+
+Trained for 13 epochs (early-stopped; best checkpoint at epoch 9,
+`val_loss=2.7392`) on a T4 GPU via `notebooks/train_colab.ipynb`.
 
 ## Attention visualizations
 
@@ -95,7 +98,19 @@ region the model attended to while generating that specific word._
 - Encoder kept frozen throughout training (no fine-tuning), which trades
   some accuracy for training stability/speed within the project timeline
 - Occasional repetitive captions on out-of-distribution images, a known
-  symptom of exposure bias in teacher-forced sequence models
+  symptom of exposure bias in teacher-forced sequence models — mitigated
+  but not eliminated by n-gram-repetition blocking in
+  `CaptionModel.generate_greedy`/`generate_beam` (see Engineering notes)
+- **Object hallucination on out-of-distribution scenes**: on a test
+  photo of an empty storefront with no people, the model captioned "a
+  person is sitting on a sidewalk in front of a store" — no person is
+  present. Flickr8k is heavily biased toward photos of people and
+  animals in action; faced with a scene outside that distribution, the
+  model falls back to its strongest prior (a person is doing something)
+  rather than correctly reporting absence. This is a dataset-scale
+  limitation, not a decoding-strategy bug — no amount of beam search or
+  repetition blocking fixes a belief the model doesn't have the training
+  data to correct.
 - Evaluated with greedy and beam-search decoding only — no length
   normalization or diverse beam search
 
@@ -130,10 +145,18 @@ Honest next steps, not yet implemented:
 - **LR scheduling + early stopping**: `train.py` halves the learning rate
   when validation loss plateaus for 2 epochs, and stops training after 4
   epochs with no improvement, rather than a fixed epoch count.
-- **Tested, not just self-tested**: `tests/` has 26 pytest tests covering
+- **N-gram repetition blocking at decode time**: `generate_greedy` and
+  `generate_beam` skip any candidate word that would recreate a 3-gram
+  already generated (`no_repeat_ngram_size=3` by default, matching
+  HuggingFace's `generate()` convention). Removes visible repetition
+  loops ("a white dress and a white dress") without retraining — it
+  does not and cannot fix factual accuracy, only decoding-level
+  repetition (see Limitations).
+- **Tested, not just self-tested**: `tests/` has 30 pytest tests covering
   every module (shapes, gradient flow, vocabulary edge cases, dataset
-  batching/augmentation, greedy/beam decoding) — runs in ~4 seconds, no
-  GPU or dataset download required. CI runs it on every push.
+  batching/augmentation, greedy/beam decoding, n-gram blocking) — runs
+  in ~4 seconds, no GPU or dataset download required. CI runs it on
+  every push.
 
 ## Setup
 
