@@ -55,6 +55,14 @@ def evaluate(checkpoint_path: str, test_pairs_by_image: dict[str, list[str]],
         image_tensor = transform(image).unsqueeze(0)
 
         generated_caption, _ = model.generate_greedy(image_tensor)
+        # An empty candidate (an undertrained model emitting <end> as its
+        # first token) desyncs pycocoevalcap's METEOR scorer -- it shells
+        # out to a Java process and reads exactly one score line per
+        # image, so a missing line there throws every later readline()
+        # off by one, surfacing as a ValueError far from its real cause.
+        # A harmless placeholder keeps line counts aligned.
+        if not generated_caption.strip():
+            generated_caption = "<empty>"
 
         gts[i] = references
         res[i] = [generated_caption]
@@ -65,13 +73,19 @@ def evaluate(checkpoint_path: str, test_pairs_by_image: dict[str, list[str]],
     from pycocoevalcap.meteor.meteor import Meteor
 
     scores: dict[str, float] = {}
-    bleu_scorer = Bleu(4)
-    bleu_score, _ = bleu_scorer.compute_score(gts, res)
+
+    bleu_score, _ = Bleu(4).compute_score(gts, res)
     for n, score in enumerate(bleu_score, start=1):
         scores[f"BLEU-{n}"] = score
 
-    meteor_score, _ = Meteor().compute_score(gts, res)
-    scores["METEOR"] = meteor_score
+    # METEOR shells out to a Java subprocess; a version/environment
+    # mismatch there is a known source of parsing failures unrelated to
+    # the model itself. Don't let it take BLEU/CIDEr down with it.
+    try:
+        meteor_score, _ = Meteor().compute_score(gts, res)
+        scores["METEOR"] = meteor_score
+    except Exception as e:
+        print(f"METEOR scoring failed ({e}); reporting BLEU/CIDEr only.")
 
     cider_score, _ = Cider().compute_score(gts, res)
     scores["CIDEr"] = cider_score
