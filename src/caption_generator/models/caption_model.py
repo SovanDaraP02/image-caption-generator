@@ -16,6 +16,21 @@ from caption_generator.models.decoder import DecoderWithAttention
 from caption_generator.models.encoder import EncoderCNN
 
 
+def _would_repeat_ngram(seq: list[int], next_id: int, n: int) -> bool:
+    """True if appending next_id to seq would create an n-gram that
+    already occurred earlier in seq. Standard decoding-time repetition
+    guard (e.g. HuggingFace's `no_repeat_ngram_size`) -- it blocks loops
+    like "white dress and a white dress" without needing retraining,
+    since the underlying cause (a lightly-trained decoder falling back
+    to a familiar phrase when uncertain) is a training-data/capacity
+    issue that no amount of decoding cleverness fully fixes, but n-gram
+    blocking prevents the most visible symptom of it."""
+    if n <= 0 or len(seq) < n - 1:
+        return False
+    candidate = tuple(seq[-(n - 1):] + [next_id])
+    return any(tuple(seq[i:i + n]) == candidate for i in range(len(seq) - n + 1))
+
+
 class CaptionModel:
     """Thin wrapper, not an nn.Module itself -- holds a trained encoder +
     decoder pair and provides inference methods. Training uses encoder
@@ -31,13 +46,18 @@ class CaptionModel:
         self.max_len = max_len
 
     @torch.no_grad()
-    def generate_greedy(self, image: torch.Tensor) -> tuple[str, list[torch.Tensor]]:
-        """image: (1, 3, 224, 224). Returns (caption_string, alphas list)."""
+    def generate_greedy(self, image: torch.Tensor,
+                         no_repeat_ngram_size: int = 3) -> tuple[str, list[torch.Tensor]]:
+        """image: (1, 3, 224, 224). Returns (caption_string, alphas list).
+
+        no_repeat_ngram_size: block picking a token that would recreate
+        an n-gram already generated (0 disables this).
+        """
         encoder_out = self.encoder(image.to(self.device))  # (1, 49, 2048)
         h, c = self.decoder.init_hidden_state(encoder_out)
 
         word = torch.tensor([self.vocab.word2idx[self.vocab.START_TOKEN]], device=self.device)
-        generated_ids = []
+        generated_ids: list[int] = []
         alphas = []
 
         for _ in range(self.max_len):
@@ -47,8 +67,15 @@ class CaptionModel:
             h, c = self.decoder.lstm_cell(lstm_input, (h, c))
             logits = self.decoder.fc(h)  # (1, vocab_size)
 
-            word = logits.argmax(dim=1)  # greedy pick
-            token_id = word.item()
+            # walk candidates best-to-worst, skip any that would create a
+            # repeated n-gram, fall back to the top pick if all are blocked
+            ranked_ids = logits.squeeze(0).argsort(descending=True).tolist()
+            token_id = ranked_ids[0]
+            for candidate_id in ranked_ids:
+                if not _would_repeat_ngram(generated_ids, candidate_id, no_repeat_ngram_size):
+                    token_id = candidate_id
+                    break
+            word = torch.tensor([token_id], device=self.device)
             alphas.append(alpha.squeeze(0).cpu())
 
             if token_id == self.vocab.word2idx[self.vocab.END_TOKEN]:
@@ -58,8 +85,13 @@ class CaptionModel:
         return self.vocab.decode(generated_ids), alphas
 
     @torch.no_grad()
-    def generate_beam(self, image: torch.Tensor, beam_width: int = 3) -> str:
-        """image: (1, 3, 224, 224). Returns the best caption string."""
+    def generate_beam(self, image: torch.Tensor, beam_width: int = 3,
+                       no_repeat_ngram_size: int = 3) -> str:
+        """image: (1, 3, 224, 224). Returns the best caption string.
+
+        no_repeat_ngram_size: block candidates that would recreate an
+        n-gram already generated in that beam (0 disables this).
+        """
         encoder_out = self.encoder(image.to(self.device))  # (1, 49, 2048)
         h0, c0 = self.decoder.init_hidden_state(encoder_out)
 
@@ -85,9 +117,17 @@ class CaptionModel:
                 logits = self.decoder.fc(h_new)
                 log_probs = F.log_softmax(logits, dim=1).squeeze(0)  # (vocab_size,)
 
-                top_log_probs, top_ids = log_probs.topk(beam_width)
+                # over-fetch so there's still `beam_width` options left
+                # after any get filtered out by the n-gram check
+                top_log_probs, top_ids = log_probs.topk(min(beam_width * 4, log_probs.shape[0]))
+                kept = 0
                 for lp, tid in zip(top_log_probs.tolist(), top_ids.tolist()):
+                    if _would_repeat_ngram(seq, tid, no_repeat_ngram_size):
+                        continue
                     candidates.append((seq + [tid], log_prob + lp, h_new, c_new))
+                    kept += 1
+                    if kept >= beam_width:
+                        break
 
             if not candidates:
                 break

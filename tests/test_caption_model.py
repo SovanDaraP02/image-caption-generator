@@ -1,7 +1,7 @@
 import torch
 
 from caption_generator.data.vocabulary import Vocabulary
-from caption_generator.models.caption_model import CaptionModel
+from caption_generator.models.caption_model import CaptionModel, _would_repeat_ngram
 from caption_generator.models.decoder import DecoderWithAttention
 from caption_generator.models.encoder import EncoderCNN
 
@@ -44,3 +44,21 @@ def test_beam_search_never_emits_start_or_end_tokens():
 
     assert vocab.START_TOKEN not in tokens
     assert vocab.END_TOKEN not in tokens
+
+
+def test_would_repeat_ngram_blocks_exact_repeat():
+    # sequence [1, 2, 3, 1, 2] followed by 3 would recreate the trigram [1, 2, 3]
+    assert _would_repeat_ngram([1, 2, 3, 1, 2], next_id=3, n=3) is True
+
+
+def test_would_repeat_ngram_allows_novel_continuation():
+    assert _would_repeat_ngram([1, 2, 3, 1, 2], next_id=9, n=3) is False
+
+
+def test_would_repeat_ngram_disabled_when_n_is_zero():
+    assert _would_repeat_ngram([1, 2, 3, 1, 2], next_id=3, n=0) is False
+
+
+def test_would_repeat_ngram_no_false_positive_before_enough_history():
+    # can't form a trigram at all yet with only 1 prior token
+    assert _would_repeat_ngram([1], next_id=1, n=3) is False
