@@ -4,8 +4,9 @@ __pycache__/
 .ipynb_checkpoints/
 *.egg-info/
 
-# large/generated, regenerate via SETUP_DATA.md and train.py
+# large/generated, regenerate via SETUP_DATA.md / train_colab*.ipynb
 data/flickr8k/
+data/coco/
 *.pth
 
 # OS

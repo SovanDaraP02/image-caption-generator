@@ -84,6 +84,31 @@ Evaluated on the Flickr8k test split (1,000 images, 5 reference captions each):
 Trained for 13 epochs (early-stopped; best checkpoint at epoch 9,
 `val_loss=2.7392`) on a T4 GPU via `notebooks/train_colab.ipynb`.
 
+## Two training tiers
+
+This repo supports training the same architecture on two datasets of
+very different scale, deliberately kept as separate notebooks rather
+than one config flag, so both results stand on their own:
+
+| | Flickr8k (baseline) | COCO (scaled) |
+|---|---|---|
+| Notebook | `notebooks/train_colab.ipynb` | `notebooks/train_colab_coco.ipynb` |
+| Training images | ~6,000 | up to 50,000 (configurable) |
+| Split | ad-hoc 80/10/10 | Karpathy split (matches published baselines) |
+| Runtime | ~30-60 min | several hours (download + train) |
+| Known failure mode | hallucinates objects/people on scenes outside Flickr8k's narrow people/animal-heavy distribution (see Limitations) | tests whether more scene diversity fixes that |
+
+The Flickr8k run is what produced the Results table above. The COCO
+notebook exists specifically to test the hallucination finding from
+that run against a much larger, more diverse dataset — fill in its
+results here once that run completes:
+
+| Metric | Flickr8k | COCO |
+|---|---|---|
+| BLEU-4 | 0.1585 | _pending_ |
+| METEOR | 0.1953 | _pending_ |
+| CIDEr | 0.4521 | _pending_ |
+
 ## Attention visualizations
 
 ![attention heatmap example](assets/attention_visualizations/example_1.png)
@@ -118,8 +143,6 @@ region the model attended to while generating that specific word._
 
 Honest next steps, not yet implemented:
 
-- **Larger/more diverse training data** (COCO or Conceptual Captions)
-  to generalize beyond Flickr8k's narrow scene distribution
 - **Transformer decoder variant**, benchmarked against the current LSTM
   decoder on the same data/metrics as a case study in trade-offs
 - **Visual question answering** is explicitly out of scope for this
@@ -171,6 +194,9 @@ pytest                     # verify everything works, ~4s
 See [`SETUP_DATA.md`](./SETUP_DATA.md) for downloading Flickr8k, and
 [`notebooks/train_colab.ipynb`](./notebooks/train_colab.ipynb) for a
 ready-to-run Colab notebook that does the whole pipeline on a free GPU.
+[`notebooks/train_colab_coco.ipynb`](./notebooks/train_colab_coco.ipynb)
+trains the same architecture on a larger, more diverse COCO subset
+instead — see Two training tiers below for why both exist.
 
 ```bash
 python -m caption_generator.train                 # trains, saves best_checkpoint.pth
@@ -191,7 +217,7 @@ image-caption-generator/
 ├── src/caption_generator/
 │   ├── data/
 │   │   ├── vocabulary.py      # Vocabulary class, tokenization
-│   │   └── dataset.py          # Flickr8kDataset + collate_fn
+│   │   └── dataset.py          # ImageCaptionDataset + collate_fn
 │   ├── models/
 │   │   ├── encoder.py           # ResNet-50/101/152 feature extractor
 │   │   ├── attention.py         # Bahdanau attention
@@ -202,7 +228,8 @@ image-caption-generator/
 │   └── visualize_attention.py
 ├── tests/                     # pytest suite, no GPU/dataset needed
 ├── notebooks/
-│   └── train_colab.ipynb    # end-to-end training notebook for Colab
+│   ├── train_colab.ipynb        # Flickr8k baseline training notebook
+│   └── train_colab_coco.ipynb   # larger, more diverse COCO training notebook
 ├── .github/workflows/ci.yml  # runs pytest on every push
 ├── app.py                    # Streamlit demo (imports the installed package)
 ├── SETUP_DATA.md

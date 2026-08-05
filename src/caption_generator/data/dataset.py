@@ -1,16 +1,14 @@
-"""Flickr8kDataset + collate_fn.
+"""ImageCaptionDataset + collate_fn.
+
+Dataset-agnostic: works with any (image_filename, raw_caption) pairs
+under a shared image directory, so the same class serves Flickr8k
+(see SETUP_DATA.md) and the larger COCO Karpathy-split subset (see
+notebooks/train_colab_coco.ipynb) without modification.
 
 collate_fn exists because captions in a batch have different lengths,
 and the default DataLoader can't stack tensors of different shapes into
 one batch tensor. Each batch is padded to its own longest caption
 (not the dataset-wide longest), so short batches don't waste compute.
-
-Expected Flickr8k layout after download (see ../../SETUP_DATA.md):
-    data/flickr8k/
-        Images/
-            1000268201_693b08cb0e.jpg
-            ...
-        captions.txt        # columns: image,caption
 """
 
 import os
@@ -27,7 +25,7 @@ IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 
 
-class Flickr8kDataset(Dataset):
+class ImageCaptionDataset(Dataset):
     def __init__(self, image_dir: str, image_caption_pairs: list[tuple[str, str]],
                  vocab: Vocabulary, split: str = "train"):
         """

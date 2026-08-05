@@ -4,7 +4,7 @@ from PIL import Image
 from torch.utils.data import DataLoader
 
 from caption_generator.data.vocabulary import Vocabulary
-from caption_generator.data.dataset import Flickr8kDataset, collate_fn
+from caption_generator.data.dataset import ImageCaptionDataset, collate_fn
 
 
 def _make_fake_dataset(tmp_path):
@@ -28,7 +28,7 @@ def _make_fake_dataset(tmp_path):
 
 def test_batch_shapes(tmp_path):
     image_dir, pairs, vocab = _make_fake_dataset(tmp_path)
-    dataset = Flickr8kDataset(image_dir, pairs, vocab, split="train")
+    dataset = ImageCaptionDataset(image_dir, pairs, vocab, split="train")
     pad_idx = vocab.word2idx[vocab.PAD_TOKEN]
 
     loader = DataLoader(dataset, batch_size=3, shuffle=False,
@@ -41,7 +41,7 @@ def test_batch_shapes(tmp_path):
 
 def test_captions_padded_to_batch_max_length(tmp_path):
     image_dir, pairs, vocab = _make_fake_dataset(tmp_path)
-    dataset = Flickr8kDataset(image_dir, pairs, vocab, split="val")
+    dataset = ImageCaptionDataset(image_dir, pairs, vocab, split="val")
     pad_idx = vocab.word2idx[vocab.PAD_TOKEN]
 
     loader = DataLoader(dataset, batch_size=len(pairs), shuffle=False,
@@ -54,8 +54,8 @@ def test_captions_padded_to_batch_max_length(tmp_path):
 
 def test_val_split_has_no_random_augmentation_flip(tmp_path):
     image_dir, pairs, vocab = _make_fake_dataset(tmp_path)
-    train_ds = Flickr8kDataset(image_dir, pairs, vocab, split="train")
-    val_ds = Flickr8kDataset(image_dir, pairs, vocab, split="val")
+    train_ds = ImageCaptionDataset(image_dir, pairs, vocab, split="train")
+    val_ds = ImageCaptionDataset(image_dir, pairs, vocab, split="val")
 
     train_transform_names = [type(t).__name__ for t in train_ds.transform.transforms]
     val_transform_names = [type(t).__name__ for t in val_ds.transform.transforms]

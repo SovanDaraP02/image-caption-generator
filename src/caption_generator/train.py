@@ -17,7 +17,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-from caption_generator.data.dataset import Flickr8kDataset, collate_fn
+from caption_generator.data.dataset import ImageCaptionDataset, collate_fn
 from caption_generator.data.vocabulary import Vocabulary
 from caption_generator.models.decoder import DecoderWithAttention
 from caption_generator.models.encoder import EncoderCNN
@@ -84,8 +84,8 @@ def main() -> None:
     vocab = Vocabulary(min_word_freq=5).build(TRAIN_CAPTIONS_RAW)
     pad_idx = vocab.word2idx[vocab.PAD_TOKEN]
 
-    train_dataset = Flickr8kDataset(IMAGE_DIR, TRAIN_PAIRS, vocab, split="train")
-    val_dataset = Flickr8kDataset(IMAGE_DIR, VAL_PAIRS, vocab, split="val")
+    train_dataset = ImageCaptionDataset(IMAGE_DIR, TRAIN_PAIRS, vocab, split="train")
+    val_dataset = ImageCaptionDataset(IMAGE_DIR, VAL_PAIRS, vocab, split="val")
 
     train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True,
                                collate_fn=lambda b: collate_fn(b, pad_idx))
