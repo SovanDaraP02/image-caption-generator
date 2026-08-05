@@ -109,6 +109,30 @@ results here once that run completes:
 | METEOR | 0.1953 | _pending_ |
 | CIDEr | 0.4521 | _pending_ |
 
+### A note on where the COCO run actually executes
+
+`notebooks/train_colab_coco.ipynb` targets Colab, but Colab's free tier
+has undocumented, fluctuating session limits (Google's own FAQ: usage
+limits "vary over time" and are deliberately not published) — in
+practice, sessions were reclaimed before a single epoch finished on
+this dataset size. Two things made this tractable rather than switching
+away entirely:
+
+- The training loop saves full resumable state (model + optimizer +
+  scheduler + epoch number) after every epoch, backed up to Drive, and
+  auto-resumes from it in a fresh session instead of restarting.
+- The downloaded image set is archived to Drive after a successful
+  download, so a reconnect doesn't re-pay the ~35-minute download cost
+  every time.
+
+`notebooks/train_kaggle_coco.ipynb` is the same training logic adapted
+for **Kaggle Notebooks**, which publishes an actual quota (30 GPU-hours/
+week, up to 12 hours/session) and supports background execution (Save
+Version → Save & Run All) that survives closing the browser tab —
+avoiding most of the above by construction rather than working around
+it. Either notebook produces a checkpoint evaluable the same way; which
+one to use is a platform-availability choice, not an architecture one.
+
 ## Attention visualizations
 
 ![attention heatmap example](assets/attention_visualizations/example_1.png)
@@ -194,9 +218,12 @@ pytest                     # verify everything works, ~4s
 See [`SETUP_DATA.md`](./SETUP_DATA.md) for downloading Flickr8k, and
 [`notebooks/train_colab.ipynb`](./notebooks/train_colab.ipynb) for a
 ready-to-run Colab notebook that does the whole pipeline on a free GPU.
+For a larger, more diverse COCO subset instead, use
 [`notebooks/train_colab_coco.ipynb`](./notebooks/train_colab_coco.ipynb)
-trains the same architecture on a larger, more diverse COCO subset
-instead — see Two training tiers below for why both exist.
+(Colab) or
+[`notebooks/train_kaggle_coco.ipynb`](./notebooks/train_kaggle_coco.ipynb)
+(Kaggle, recommended if Colab's free-tier session limits are an issue)
+— see Two training tiers below for the full rationale.
 
 ```bash
 python -m caption_generator.train                 # trains, saves best_checkpoint.pth
@@ -228,8 +255,9 @@ image-caption-generator/
 │   └── visualize_attention.py
 ├── tests/                     # pytest suite, no GPU/dataset needed
 ├── notebooks/
-│   ├── train_colab.ipynb        # Flickr8k baseline training notebook
-│   └── train_colab_coco.ipynb   # larger, more diverse COCO training notebook
+│   ├── train_colab.ipynb        # Flickr8k baseline training notebook (Colab)
+│   ├── train_colab_coco.ipynb   # larger, more diverse COCO training notebook (Colab)
+│   └── train_kaggle_coco.ipynb  # same COCO training, adapted for Kaggle's longer/more predictable sessions
 ├── .github/workflows/ci.yml  # runs pytest on every push
 ├── app.py                    # Streamlit demo (imports the installed package)
 ├── SETUP_DATA.md
