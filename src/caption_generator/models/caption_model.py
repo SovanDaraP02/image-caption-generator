@@ -1,22 +1,19 @@
-"""
-CaptionModel: composes EncoderCNN + DecoderWithAttention into one module,
-plus greedy and beam-search generation for inference (Day 12).
+"""CaptionModel: composes EncoderCNN + DecoderWithAttention into one
+unit, plus greedy and beam-search inference.
 
-Day 12 concept check — greedy vs. beam search:
-- Greedy: at each step, take the single highest-probability word and
-  commit to it. Fast, but one bad early pick can derail the whole
-  sentence, and it can get stuck repeating itself.
-- Beam search: keep the top-k partial sequences at every step instead of
-  just one, and only commit at the end. Costs k times the compute, but
-  usually produces noticeably better captions. Implement both -- being
-  able to explain *why* beam search helps is a good interview answer.
+Greedy decoding commits to the single highest-probability word at each
+step -- fast, but one bad early pick can derail the rest of the
+sentence, and it's prone to repetition loops. Beam search keeps the
+top-k partial sequences at every step and only commits at the end,
+trading k times the compute for noticeably better captions.
 """
 
 import torch
 import torch.nn.functional as F
 
-from encoder import EncoderCNN
-from decoder import DecoderWithAttention
+from caption_generator.data.vocabulary import Vocabulary
+from caption_generator.models.decoder import DecoderWithAttention
+from caption_generator.models.encoder import EncoderCNN
 
 
 class CaptionModel:
@@ -26,7 +23,7 @@ class CaptionModel:
     teacher-forcing forward passes."""
 
     def __init__(self, encoder: EncoderCNN, decoder: DecoderWithAttention,
-                 vocab, device: str = "cpu", max_len: int = 25):
+                 vocab: Vocabulary, device: str = "cpu", max_len: int = 25):
         self.encoder = encoder.to(device).eval()
         self.decoder = decoder.to(device).eval()
         self.vocab = vocab
@@ -34,7 +31,7 @@ class CaptionModel:
         self.max_len = max_len
 
     @torch.no_grad()
-    def generate_greedy(self, image: torch.Tensor):
+    def generate_greedy(self, image: torch.Tensor) -> tuple[str, list[torch.Tensor]]:
         """image: (1, 3, 224, 224). Returns (caption_string, alphas list)."""
         encoder_out = self.encoder(image.to(self.device))  # (1, 49, 2048)
         h, c = self.decoder.init_hidden_state(encoder_out)
@@ -61,7 +58,7 @@ class CaptionModel:
         return self.vocab.decode(generated_ids), alphas
 
     @torch.no_grad()
-    def generate_beam(self, image: torch.Tensor, beam_width: int = 3):
+    def generate_beam(self, image: torch.Tensor, beam_width: int = 3) -> str:
         """image: (1, 3, 224, 224). Returns the best caption string."""
         encoder_out = self.encoder(image.to(self.device))  # (1, 49, 2048)
         h0, c0 = self.decoder.init_hidden_state(encoder_out)
@@ -106,32 +103,3 @@ class CaptionModel:
         best_seq, _ = max(completed, key=lambda x: x[1])
         ids = [t for t in best_seq if t not in (start_id, end_id)]
         return self.vocab.decode(ids)
-
-
-if __name__ == "__main__":
-    # end-to-end self-test with a fully untrained model — this only
-    # proves the plumbing works (shapes, control flow), not caption
-    # quality, which requires real training on Colab.
-    import os
-    import sys
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data"))
-    from vocabulary import Vocabulary
-
-    vocab = Vocabulary(min_word_freq=1).build([
-        "a dog runs in the grass", "a cat sits on the mat"
-    ])
-
-    encoder = EncoderCNN(fine_tune=False)
-    decoder = DecoderWithAttention(vocab_size=len(vocab), encoder_dim=2048)
-    model = CaptionModel(encoder, decoder, vocab, device="cpu", max_len=10)
-
-    dummy_image = torch.randn(1, 3, 224, 224)
-
-    caption_greedy, alphas = model.generate_greedy(dummy_image)
-    print(f"Greedy caption (untrained, expect gibberish): '{caption_greedy}'")
-    print(f"Number of attention maps captured: {len(alphas)}, each shape: {alphas[0].shape if alphas else None}")
-
-    caption_beam = model.generate_beam(dummy_image, beam_width=3)
-    print(f"Beam-search caption (untrained, expect gibberish): '{caption_beam}'")
-
-    print("caption_model.py self-test passed -- inference pipeline runs end to end")

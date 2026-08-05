@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from encoder import EncoderCNN
+from caption_generator.models.encoder import EncoderCNN
 
 
 def test_output_shape():

@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
+*.egg-info/
 
 # large/generated, regenerate via SETUP_DATA.md and train.py
 data/flickr8k/

@@ -17,11 +17,11 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-      - name: Install dependencies
-        run: pip install -r requirements-dev.txt
+      - name: Install package
+        run: pip install -e ".[dev]"
 
       - name: Run tests
         run: pytest -v
 
       - name: Compile-check all scripts
-        run: python -m py_compile train.py evaluate.py visualize_attention.py app.py data/*.py models/*.py
+        run: python -m py_compile app.py src/caption_generator/*.py src/caption_generator/data/*.py src/caption_generator/models/*.py

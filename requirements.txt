@@ -1,3 +1,8 @@
+# Mirrors [project.dependencies] in pyproject.toml. This file exists only
+# because Hugging Face Spaces' Streamlit SDK auto-installs from
+# requirements.txt and does not read pyproject.toml -- see DEPLOY_SPACES.md.
+# For local dev / CI, use `pip install -e ".[dev]"` instead; keep this in
+# sync if you change pyproject.toml dependencies.
 torch>=2.2
 torchvision>=0.17
 pandas

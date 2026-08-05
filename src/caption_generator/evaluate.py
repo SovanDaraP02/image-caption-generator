@@ -1,37 +1,29 @@
-"""
-Evaluation: run trained model against the test split, score with
-BLEU-1..4 / METEOR / CIDEr via pycocoevalcap.
+"""Evaluation: run a trained checkpoint against the test split, score
+with BLEU-1..4 / METEOR / CIDEr via pycocoevalcap.
 
-Day 12 concept check — what each metric actually measures:
-- BLEU: n-gram precision against reference captions. Cheap to compute,
-  widely reported, but purely surface-level (doesn't understand synonyms).
-- METEOR: also considers synonyms/stemming, correlates better with human
-  judgment than BLEU alone.
-- CIDEr: built specifically for image captioning; weights n-grams by
-  TF-IDF, so it penalizes generic captions ("a photo of something") more
-  than BLEU does.
-Report all three -- a model can look good on one and mediocre on another,
-and that gap is itself worth discussing in your face-to-face.
+Report all three rather than just BLEU: BLEU is n-gram precision only
+(cheap, widely reported, but surface-level -- no synonym awareness).
+METEOR adds synonym/stemming matching and correlates better with human
+judgment. CIDEr is purpose-built for captioning -- it TF-IDF-weights
+n-grams, so it penalizes generic captions ("a photo of something") more
+than BLEU does. A model can look good on one metric and mediocre on
+another; that gap is informative, not noise.
 
 Install first:  pip install pycocoevalcap
 """
 
-import sys
 import torch
-from torch.utils.data import DataLoader
 
-sys.path.insert(0, "data")
-sys.path.insert(0, "models")
-from vocabulary import Vocabulary            # noqa: E402
-from dataset import Flickr8kDataset, collate_fn  # noqa: E402
-from encoder import EncoderCNN                # noqa: E402
-from decoder import DecoderWithAttention      # noqa: E402
-from caption_model import CaptionModel        # noqa: E402
+from caption_generator.data.vocabulary import Vocabulary
+from caption_generator.models.caption_model import CaptionModel
+from caption_generator.models.decoder import DecoderWithAttention
+from caption_generator.models.encoder import EncoderCNN
 
 
-def evaluate(checkpoint_path: str, test_pairs_by_image: dict, image_dir: str, device: str = "cpu"):
+def evaluate(checkpoint_path: str, test_pairs_by_image: dict[str, list[str]],
+             image_dir: str, device: str = "cpu") -> dict[str, float]:
     """
-    test_pairs_by_image: dict of {image_filename: [ref_caption_1, ref_caption_2, ...]}
+    test_pairs_by_image: {image_filename: [ref_caption_1, ref_caption_2, ...]}
                           -- captioning metrics need ALL reference captions
                           per image, not just one, since Flickr8k has 5
                           human-written captions per image.
@@ -69,10 +61,10 @@ def evaluate(checkpoint_path: str, test_pairs_by_image: dict, image_dir: str, de
 
     # pycocoevalcap wants this exact import path
     from pycocoevalcap.bleu.bleu import Bleu
-    from pycocoevalcap.meteor.meteor import Meteor
     from pycocoevalcap.cider.cider import Cider
+    from pycocoevalcap.meteor.meteor import Meteor
 
-    scores = {}
+    scores: dict[str, float] = {}
     bleu_scorer = Bleu(4)
     bleu_score, _ = bleu_scorer.compute_score(gts, res)
     for n, score in enumerate(bleu_score, start=1):

@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "caption-generator"
+version = "0.1.0"
+description = "ResNet encoder + Bahdanau attention + LSTM decoder image captioning, trained on Flickr8k"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.2",
+    "torchvision>=0.17",
+    "pandas",
+    "pillow",
+    "nltk",
+    "scikit-learn",
+    "streamlit",
+    "matplotlib",
+    "scipy",
+    "pycocoevalcap",
+    "datasets",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+caption-train = "caption_generator.train:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,9 +1,9 @@
 import torch
 
-from vocabulary import Vocabulary
-from encoder import EncoderCNN
-from decoder import DecoderWithAttention
-from caption_model import CaptionModel
+from caption_generator.data.vocabulary import Vocabulary
+from caption_generator.models.caption_model import CaptionModel
+from caption_generator.models.decoder import DecoderWithAttention
+from caption_generator.models.encoder import EncoderCNN
 
 
 def _build_model():

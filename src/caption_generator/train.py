@@ -1,35 +1,32 @@
-"""
-Training loop. Run this on Colab with a GPU, real Flickr8k data, and
-pretrained ResNet-50 weights (all three need real internet access this
-sandbox doesn't have -- see SETUP_DATA.md for the Colab-side steps).
+"""Training loop. Run on a machine with a GPU and real Flickr8k data
+downloaded (see SETUP_DATA.md, or notebooks/train_colab.ipynb for a
+ready-to-run Colab pipeline).
 
-Day 10-11 concept check:
-- Gradient clipping: LSTMs are prone to exploding gradients. Without
-  clipping, a single bad batch can blow up your weights into NaN and
-  you'll have wasted an hour of training with nothing to show for it.
-- The doubly stochastic attention regularization term (blueprint
-  Section 4.2) encourages the model to look at every image region
-  roughly equally *summed over the whole caption* -- it's added to the
-  loss below as `attention_regularization`.
-- Save the checkpoint with the BEST validation loss, not the last epoch
-  -- they're often not the same, especially on a small dataset.
+Gradient clipping guards against the exploding gradients LSTMs are
+prone to -- without it, a single bad batch can blow up the weights
+into NaN partway through a long run. The doubly stochastic attention
+regularization term encourages the model to attend to every image
+region roughly equally over the course of a full caption (Xu et al.
+2015, Show Attend and Tell, Section 4.2.1), added below as
+`attention_regularization`. The checkpoint saved is whichever epoch had
+the best validation loss, not the last epoch -- on a dataset this small
+those are often not the same epoch.
 """
 
-import sys
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-sys.path.insert(0, "data")
-sys.path.insert(0, "models")
-from vocabulary import Vocabulary          # noqa: E402
-from dataset import Flickr8kDataset, collate_fn  # noqa: E402
-from encoder import EncoderCNN              # noqa: E402
-from decoder import DecoderWithAttention    # noqa: E402
+from caption_generator.data.dataset import Flickr8kDataset, collate_fn
+from caption_generator.data.vocabulary import Vocabulary
+from caption_generator.models.decoder import DecoderWithAttention
+from caption_generator.models.encoder import EncoderCNN
 
 
-def train_one_epoch(encoder, decoder, loader, optimizer, criterion, device,
-                     pad_idx, alpha_reg_lambda=1.0, grad_clip=5.0):
+def train_one_epoch(encoder: EncoderCNN, decoder: DecoderWithAttention,
+                     loader: DataLoader, optimizer: torch.optim.Optimizer,
+                     criterion: nn.Module, device: torch.device, pad_idx: int,
+                     alpha_reg_lambda: float = 1.0, grad_clip: float = 5.0) -> float:
     decoder.train()
     total_loss = 0.0
 
@@ -42,8 +39,8 @@ def train_one_epoch(encoder, decoder, loader, optimizer, criterion, device,
         targets = captions[:, 1:]  # predict tokens 1..T-1
         loss = criterion(logits.reshape(-1, logits.shape[-1]), targets.reshape(-1))
 
-        # doubly stochastic attention regularization (blueprint Section 4.2):
-        # encourage sum-over-time attention per region to be close to 1
+        # doubly stochastic attention regularization: encourage
+        # sum-over-time attention per region to be close to 1
         attention_regularization = alpha_reg_lambda * ((1.0 - alphas.sum(dim=1)) ** 2).mean()
         loss = loss + attention_regularization
 
@@ -58,7 +55,8 @@ def train_one_epoch(encoder, decoder, loader, optimizer, criterion, device,
 
 
 @torch.no_grad()
-def validate(encoder, decoder, loader, criterion, device):
+def validate(encoder: EncoderCNN, decoder: DecoderWithAttention, loader: DataLoader,
+             criterion: nn.Module, device: torch.device) -> float:
     decoder.eval()
     total_loss = 0.0
     for images, captions in loader:
@@ -71,14 +69,15 @@ def validate(encoder, decoder, loader, criterion, device):
     return total_loss / len(loader)
 
 
-def main():
+def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # --- TODO (Colab): point these at your real downloaded data ---
-    # See SETUP_DATA.md for how to get Flickr8k + captions.txt onto Colab.
-    TRAIN_PAIRS = []   # list of (image_filename, raw_caption) for train split
-    VAL_PAIRS = []     # list of (image_filename, raw_caption) for val split
+    # See SETUP_DATA.md for downloading Flickr8k + captions.txt, or run
+    # notebooks/train_colab.ipynb, which builds these from the real
+    # dataset and calls train_one_epoch/validate directly.
+    TRAIN_PAIRS: list[tuple[str, str]] = []   # (image_filename, raw_caption)
+    VAL_PAIRS: list[tuple[str, str]] = []
     IMAGE_DIR = "data/flickr8k/Images"
     TRAIN_CAPTIONS_RAW = [cap for _, cap in TRAIN_PAIRS]
 
@@ -99,9 +98,9 @@ def main():
     criterion = nn.CrossEntropyLoss(ignore_index=pad_idx)
     optimizer = torch.optim.Adam(decoder.parameters(), lr=4e-4)
 
-    # Halve the LR when val_loss stalls for 2 epochs -- on a dataset this
-    # small, a fixed LR for all 8+ epochs tends to overshoot once the
-    # decoder is past its first few epochs of easy gains.
+    # Halve the LR when val_loss plateaus for 2 epochs -- a fixed LR for
+    # the whole run tends to overshoot once the decoder is past its
+    # first few epochs of easy gains.
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.5, patience=2)
 

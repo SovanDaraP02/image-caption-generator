@@ -1,6 +1,6 @@
 import torch
 
-from attention import Attention
+from caption_generator.models.attention import Attention
 
 
 def test_shapes():

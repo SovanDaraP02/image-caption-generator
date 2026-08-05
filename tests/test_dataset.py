@@ -3,8 +3,8 @@ import os
 from PIL import Image
 from torch.utils.data import DataLoader
 
-from vocabulary import Vocabulary
-from dataset import Flickr8kDataset, collate_fn
+from caption_generator.data.vocabulary import Vocabulary
+from caption_generator.data.dataset import Flickr8kDataset, collate_fn
 
 
 def _make_fake_dataset(tmp_path):

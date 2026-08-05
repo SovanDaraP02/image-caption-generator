@@ -42,9 +42,31 @@ flowchart LR
     FC --> OUT["word(t)"]
 ```
 
-Full architecture writeup, math, and design decisions: see
-[`Extended_Blueprint_Image_Caption_Generator.md`](./Extended_Blueprint_Image_Caption_Generator.md)
-in this repo.
+## Design decisions
+
+- **Bahdanau (additive) attention over Luong (multiplicative)**: matches
+  the reference paper, and is more numerically stable at the hidden
+  sizes used here (256-512).
+- **LSTM decoder over a Transformer decoder**: for a single-GPU,
+  Flickr8k-scale project, a recurrent decoder is cheaper to train and
+  easier to reason about end-to-end. A Transformer decoder with
+  cross-attention to the 49 image tokens is a natural next step once
+  there's a larger dataset to justify it (see Roadmap).
+- **Frozen encoder**: the ResNet backbone stays frozen throughout
+  training rather than fine-tuning end-to-end. On a dataset this small,
+  unfreezing the whole network risks catastrophic forgetting of the
+  pretrained ImageNet features; `EncoderCNN(fine_tune=True)` unfreezes
+  only the last residual block as a middle ground.
+- **Doubly stochastic attention regularization** (Xu et al. 2015,
+  Section 4.2.1): the training loss includes a term encouraging the
+  model to attend to every image region roughly equally over the course
+  of a full caption, which empirically produces more sensible attention
+  maps. See `attention_regularization` in `train.py`.
+- **Teacher forcing during training**: the decoder is fed the
+  ground-truth previous token rather than its own prediction, which
+  trains faster and more stably at the cost of a train/inference
+  mismatch (exposure bias) — a known, explicitly-acknowledged limitation
+  of this architecture family, not an oversight.
 
 ## Results
 
@@ -77,17 +99,40 @@ region the model attended to while generating that specific word._
 - Evaluated with greedy and beam-search decoding only — no length
   normalization or diverse beam search
 
+## Roadmap
+
+Honest next steps, not yet implemented:
+
+- **Larger/more diverse training data** (COCO or Conceptual Captions)
+  to generalize beyond Flickr8k's narrow scene distribution
+- **Transformer decoder variant**, benchmarked against the current LSTM
+  decoder on the same data/metrics as a case study in trade-offs
+- **Visual question answering** is explicitly out of scope for this
+  architecture — captioning and VQA are different tasks (VQA needs a
+  text-question input and typically a different decoder design); doing
+  that well would mean building on a pretrained vision-language model
+  (e.g. BLIP-2, LLaVA) rather than extending this one from scratch
+- **Batch/multi-image captioning** in the Streamlit UI (the model
+  already supports batched inference; the demo currently processes
+  uploads one at a time in a loop rather than as a true batch)
+
 ## Engineering notes
 
+- **Installable package**: `src/caption_generator/` is a real Python
+  package (`pip install -e .`), not a folder of scripts stitched
+  together with `sys.path.insert` -- imports are ordinary
+  `from caption_generator.models.encoder import EncoderCNN` throughout,
+  in tests, scripts, and the Streamlit app alike.
 - **Configurable backbone**: `EncoderCNN(backbone="resnet101")` swaps the
   encoder with no downstream changes — all supported backbones output the
-  same 2048-d feature vector per region (see `models/encoder.py`).
+  same 2048-d feature vector per region (see
+  `src/caption_generator/models/encoder.py`).
 - **LR scheduling + early stopping**: `train.py` halves the learning rate
   when validation loss plateaus for 2 epochs, and stops training after 4
   epochs with no improvement, rather than a fixed epoch count.
 - **Tested, not just self-tested**: `tests/` has 26 pytest tests covering
   every module (shapes, gradient flow, vocabulary edge cases, dataset
-  batching/augmentation, greedy/beam decoding) — runs in ~3 seconds, no
+  batching/augmentation, greedy/beam decoding) — runs in ~4 seconds, no
   GPU or dataset download required. CI runs it on every push.
 
 ## Setup
@@ -96,8 +141,8 @@ region the model attended to while generating that specific word._
 git clone <this-repo>
 cd image-caption-generator
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements-dev.txt   # includes pytest
-pytest                                  # verify everything works, ~3s
+pip install -e ".[dev]"   # installs the package + pytest, editable
+pytest                     # verify everything works, ~4s
 ```
 
 See [`SETUP_DATA.md`](./SETUP_DATA.md) for downloading Flickr8k, and
@@ -105,10 +150,11 @@ See [`SETUP_DATA.md`](./SETUP_DATA.md) for downloading Flickr8k, and
 ready-to-run Colab notebook that does the whole pipeline on a free GPU.
 
 ```bash
-python train.py          # trains and saves best_checkpoint.pth
-python evaluate.py        # BLEU / METEOR / CIDEr on the test split
-python visualize_attention.py --checkpoint best_checkpoint.pth --image path/to/image.jpg
-streamlit run app.py      # local web demo
+python -m caption_generator.train                 # trains, saves best_checkpoint.pth
+python -m caption_generator.evaluate               # BLEU / METEOR / CIDEr on the test split
+python -m caption_generator.visualize_attention \
+    --checkpoint best_checkpoint.pth --image path/to/image.jpg
+streamlit run app.py                                # local web demo
 ```
 
 See [`DEPLOY_SPACES.md`](./DEPLOY_SPACES.md) to put the demo on a public
@@ -118,25 +164,27 @@ URL (Hugging Face Spaces, free tier).
 
 ```
 image-caption-generator/
-├── data/
-│   ├── vocabulary.py      # Vocabulary class, tokenization
-│   └── dataset.py          # Flickr8kDataset + collate_fn
-├── models/
-│   ├── encoder.py           # ResNet-50/101/152 feature extractor
-│   ├── attention.py         # Bahdanau attention
-│   ├── decoder.py            # LSTM decoder with attention
-│   └── caption_model.py     # composed model + greedy/beam inference
+├── pyproject.toml             # package metadata + dependencies (source of truth)
+├── src/caption_generator/
+│   ├── data/
+│   │   ├── vocabulary.py      # Vocabulary class, tokenization
+│   │   └── dataset.py          # Flickr8kDataset + collate_fn
+│   ├── models/
+│   │   ├── encoder.py           # ResNet-50/101/152 feature extractor
+│   │   ├── attention.py         # Bahdanau attention
+│   │   ├── decoder.py            # LSTM decoder with attention
+│   │   └── caption_model.py     # composed model + greedy/beam inference
+│   ├── train.py
+│   ├── evaluate.py
+│   └── visualize_attention.py
 ├── tests/                     # pytest suite, no GPU/dataset needed
 ├── notebooks/
 │   └── train_colab.ipynb    # end-to-end training notebook for Colab
 ├── .github/workflows/ci.yml  # runs pytest on every push
-├── train.py
-├── evaluate.py
-├── visualize_attention.py
-├── app.py                    # Streamlit demo
+├── app.py                    # Streamlit demo (imports the installed package)
 ├── SETUP_DATA.md
 ├── DEPLOY_SPACES.md
-└── requirements.txt
+└── requirements.txt           # mirrors pyproject.toml, needed by Hugging Face Spaces
 ```
 
 ## Acknowledgments

@@ -1,4 +1,4 @@
-from vocabulary import Vocabulary
+from caption_generator.data.vocabulary import Vocabulary
 
 
 def test_build_assigns_special_tokens_first():

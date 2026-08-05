@@ -1,28 +1,24 @@
-"""
-Streamlit demo app (Day 13). Run locally with:
+"""Streamlit demo app. Run locally with:
     streamlit run app.py
 
-Deploy for free on Streamlit Community Cloud or Hugging Face Spaces once
-you have best_checkpoint.pth — that live link is what you send to a
-reviewer so they can try their own image, not just watch a video.
+Deploy on Hugging Face Spaces (see DEPLOY_SPACES.md) once you have
+best_checkpoint.pth -- a live link is what you hand a reviewer so they
+can try their own image, not just read the code.
 """
 
-import sys
-import torch
 import streamlit as st
-from PIL import Image
+import torch
 import torchvision.transforms as T
+from PIL import Image
 
-sys.path.insert(0, "data")
-sys.path.insert(0, "models")
-from vocabulary import Vocabulary          # noqa: E402
-from encoder import EncoderCNN              # noqa: E402
-from decoder import DecoderWithAttention    # noqa: E402
-from caption_model import CaptionModel      # noqa: E402
+from caption_generator.data.vocabulary import Vocabulary
+from caption_generator.models.caption_model import CaptionModel
+from caption_generator.models.decoder import DecoderWithAttention
+from caption_generator.models.encoder import EncoderCNN
 
 
 @st.cache_resource
-def load_model(checkpoint_path: str = "best_checkpoint.pth"):
+def load_model(checkpoint_path: str = "best_checkpoint.pth") -> CaptionModel:
     checkpoint = torch.load(checkpoint_path, map_location="cpu")
 
     vocab = Vocabulary()
@@ -46,9 +42,17 @@ def preprocess(image: Image.Image) -> torch.Tensor:
     return transform(image.convert("RGB")).unsqueeze(0)
 
 
+def caption_image(model: CaptionModel, image: Image.Image, decoding_mode: str) -> str:
+    image_tensor = preprocess(image)
+    if decoding_mode == "Greedy":
+        caption, _ = model.generate_greedy(image_tensor)
+        return caption
+    return model.generate_beam(image_tensor, beam_width=3)
+
+
 st.set_page_config(page_title="Image Caption Generator", page_icon="🖼️")
 st.title("🖼️ Multimodal Image Caption Generator")
-st.caption("ResNet-50 encoder + attention mechanism + LSTM decoder, trained on Flickr8k")
+st.caption("ResNet encoder + attention mechanism + LSTM decoder, trained on Flickr8k")
 
 try:
     model = load_model()
@@ -56,22 +60,24 @@ try:
 except FileNotFoundError:
     model_loaded = False
     st.warning("No trained checkpoint found yet (best_checkpoint.pth). "
-               "Train the model with train.py on Colab first, then place "
-               "the checkpoint in this folder.")
+               "Train the model first (see notebooks/train_colab.ipynb), then "
+               "place the checkpoint in this folder.")
 
-uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
+uploaded_files = st.file_uploader(
+    "Upload one or more images", type=["jpg", "jpeg", "png"],
+    accept_multiple_files=True,
+)
 
-if uploaded_file and model_loaded:
-    image = Image.open(uploaded_file)
-    st.image(image, caption="Your image", use_container_width=True)
-
+if uploaded_files and model_loaded:
     decoding_mode = st.radio("Decoding strategy", ["Greedy", "Beam search (width 3)"])
 
-    with st.spinner("Generating caption..."):
-        image_tensor = preprocess(image)
-        if decoding_mode == "Greedy":
-            caption, _ = model.generate_greedy(image_tensor)
-        else:
-            caption = model.generate_beam(image_tensor, beam_width=3)
-
-    st.success(f"**Generated caption:** {caption}")
+    for uploaded_file in uploaded_files:
+        image = Image.open(uploaded_file)
+        col_image, col_caption = st.columns([1, 2])
+        with col_image:
+            st.image(image, caption=uploaded_file.name, use_container_width=True)
+        with col_caption:
+            with st.spinner(f"Generating caption for {uploaded_file.name}..."):
+                caption = caption_image(model, image, decoding_mode)
+            st.success(f"**Caption:** {caption}")
+        st.divider()

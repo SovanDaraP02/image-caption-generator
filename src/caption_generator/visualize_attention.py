@@ -1,31 +1,28 @@
-"""
-Generates attention heatmap overlays: for each generated word, show which
-of the 49 image regions the model was looking at. This is the single most
-convincing visual for both your README and your face-to-face demo — it's
-literally the headline result of the "Show, Attend and Tell" paper.
+"""Generates attention heatmap overlays: for each generated word, shows
+which of the 49 image regions the model attended to. This reproduces
+the headline visual from Xu et al.'s "Show, Attend and Tell".
 
-Usage (after training, on Colab):
-    python visualize_attention.py --checkpoint best_checkpoint.pth --image path/to/image.jpg
+Usage (after training):
+    python -m caption_generator.visualize_attention \\
+        --checkpoint best_checkpoint.pth --image path/to/image.jpg
 """
 
 import argparse
-import sys
-import torch
-import numpy as np
+
 import matplotlib.pyplot as plt
-from PIL import Image
+import numpy as np
+import torch
 import torchvision.transforms as T
+from PIL import Image
 from scipy.ndimage import zoom
 
-sys.path.insert(0, "data")
-sys.path.insert(0, "models")
-from vocabulary import Vocabulary          # noqa: E402
-from encoder import EncoderCNN              # noqa: E402
-from decoder import DecoderWithAttention    # noqa: E402
-from caption_model import CaptionModel      # noqa: E402
+from caption_generator.data.vocabulary import Vocabulary
+from caption_generator.models.caption_model import CaptionModel
+from caption_generator.models.decoder import DecoderWithAttention
+from caption_generator.models.encoder import EncoderCNN
 
 
-def visualize(checkpoint_path: str, image_path: str, out_path: str = "attention_heatmap.png"):
+def visualize(checkpoint_path: str, image_path: str, out_path: str = "attention_heatmap.png") -> None:
     checkpoint = torch.load(checkpoint_path, map_location="cpu")
 
     vocab = Vocabulary()

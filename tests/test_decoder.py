@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from decoder import DecoderWithAttention
+from caption_generator.models.decoder import DecoderWithAttention
 
 
 def test_forward_shapes():
