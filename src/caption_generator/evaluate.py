@@ -21,12 +21,18 @@ from caption_generator.models.encoder import EncoderCNN
 
 
 def evaluate(checkpoint_path: str, test_pairs_by_image: dict[str, list[str]],
-             image_dir: str, device: str = "cpu") -> dict[str, float]:
+             image_dir: str, device: str = "cpu", skip_meteor: bool = False) -> dict[str, float]:
     """
     test_pairs_by_image: {image_filename: [ref_caption_1, ref_caption_2, ...]}
                           -- captioning metrics need ALL reference captions
                           per image, not just one, since Flickr8k has 5
                           human-written captions per image.
+    skip_meteor: pycocoevalcap's METEOR scorer shells out to a Java
+                 subprocess and communicates over stdin/stdout line by
+                 line; in some environments a parsing failure there
+                 leaves that subprocess in a state where cleanup hangs
+                 rather than failing fast. If METEOR has hung or failed
+                 in this environment, pass True to not even attempt it.
     """
     checkpoint = torch.load(checkpoint_path, map_location=device)
 
@@ -80,12 +86,20 @@ def evaluate(checkpoint_path: str, test_pairs_by_image: dict[str, list[str]],
 
     # METEOR shells out to a Java subprocess; a version/environment
     # mismatch there is a known source of parsing failures unrelated to
-    # the model itself. Don't let it take BLEU/CIDEr down with it.
-    try:
-        meteor_score, _ = Meteor().compute_score(gts, res)
-        scores["METEOR"] = meteor_score
-    except Exception as e:
-        print(f"METEOR scoring failed ({e}); reporting BLEU/CIDEr only.")
+    # the model itself. Don't let it take BLEU/CIDEr down with it -- and
+    # if it does fail, explicitly kill the subprocess rather than let
+    # garbage collection try (and potentially hang) cleaning it up.
+    if not skip_meteor:
+        meteor_scorer = Meteor()
+        try:
+            meteor_score, _ = meteor_scorer.compute_score(gts, res)
+            scores["METEOR"] = meteor_score
+        except Exception as e:
+            print(f"METEOR scoring failed ({e}); reporting BLEU/CIDEr only.")
+            try:
+                meteor_scorer.meteor_p.kill()
+            except Exception:
+                pass
 
     cider_score, _ = Cider().compute_score(gts, res)
     scores["CIDEr"] = cider_score
