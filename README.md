@@ -100,14 +100,24 @@ than one config flag, so both results stand on their own:
 
 The Flickr8k run is what produced the Results table above. The COCO
 notebook exists specifically to test the hallucination finding from
-that run against a much larger, more diverse dataset — fill in its
-results here once that run completes:
+that run against a much larger, more diverse dataset:
 
-| Metric | Flickr8k | COCO |
+| Metric | Flickr8k (6k train images) | COCO (50k train images) |
 |---|---|---|
-| BLEU-4 | 0.1585 | _pending_ |
-| METEOR | 0.1953 | _pending_ |
-| CIDEr | 0.4521 | _pending_ |
+| BLEU-1 | — | 0.6307 |
+| BLEU-2 | — | 0.4528 |
+| BLEU-3 | — | 0.3121 |
+| BLEU-4 | 0.1585 | **0.2128** |
+| METEOR | 0.1953 | _skipped -- see Engineering notes_ |
+| CIDEr | 0.4521 | **0.6576** |
+
+More diverse training data produced a meaningfully better model, not
+just a differently-biased one: BLEU-4 improved ~34%, CIDEr ~45%,
+trained on a Kaggle Notebook (30 GPU-hours/week free tier, 10 epochs,
+resumable via checkpoint across sessions). This is the strongest
+evidence in this repo that captioning quality here is data-limited,
+not architecture-limited — the same encoder/attention/decoder code
+produced a better model purely from a larger, more varied dataset.
 
 ### A note on where the COCO run actually executes
 
@@ -199,6 +209,13 @@ Honest next steps, not yet implemented:
   loops ("a white dress and a white dress") without retraining — it
   does not and cannot fix factual accuracy, only decoding-level
   repetition (see Limitations).
+- **METEOR made optional in `evaluate()`** (`skip_meteor=True`):
+  `pycocoevalcap`'s METEOR scorer shells out to a Java subprocess and
+  parses its stdout line by line; observed in practice to both throw
+  parsing errors on some outputs and, after a caught failure, leave
+  that subprocess in a state where cleanup hangs rather than fails
+  fast. BLEU and CIDEr don't share this dependency and are unaffected.
+  A real, reproducible environment issue, not a modeling one.
 - **Tested, not just self-tested**: `tests/` has 30 pytest tests covering
   every module (shapes, gradient flow, vocabulary edge cases, dataset
   batching/augmentation, greedy/beam decoding, n-gram blocking) — runs
