@@ -6,15 +6,33 @@ best_checkpoint.pth -- a live link is what you hand a reviewer so they
 can try their own image, not just read the code.
 """
 
+import base64
+import io
+import os
+
+import anthropic
 import streamlit as st
 import torch
 import torchvision.transforms as T
 from PIL import Image
+from transformers import BlipForConditionalGeneration, BlipProcessor
 
 from caption_generator.data.vocabulary import Vocabulary
 from caption_generator.models.caption_model import CaptionModel
 from caption_generator.models.decoder import DecoderWithAttention
 from caption_generator.models.encoder import EncoderCNN
+
+BLIP_CHECKPOINT = "Salesforce/blip-image-captioning-large"
+CLAUDE_MODEL = "claude-sonnet-5"
+DETAILED_DESCRIPTION_PROMPT = (
+    "Describe this image in one detailed paragraph, as if writing a real-estate "
+    "or photo-catalog description. Name every distinct subject and object you can "
+    "see (people, furniture, plants, animals, etc.), their colors and materials, "
+    "and their spatial position in the frame (e.g. front left, center, background). "
+    "Describe the environment/setting itself (room type, flooring, walls, lighting). "
+    "Only state what is actually visible -- do not guess at things you can't see, "
+    "and do not invent people or objects that aren't present."
+)
 
 
 @st.cache_resource
@@ -31,6 +49,30 @@ def load_model(checkpoint_path: str = "best_checkpoint.pth") -> CaptionModel:
     decoder.load_state_dict(checkpoint["decoder_state"])
 
     return CaptionModel(encoder, decoder, vocab, device="cpu")
+
+
+@st.cache_resource
+def load_blip() -> tuple[BlipProcessor, BlipForConditionalGeneration]:
+    processor = BlipProcessor.from_pretrained(BLIP_CHECKPOINT)
+    model = BlipForConditionalGeneration.from_pretrained(BLIP_CHECKPOINT)
+    model.eval()
+    return processor, model
+
+
+def caption_image_blip(processor: BlipProcessor, model: BlipForConditionalGeneration,
+                        image: Image.Image) -> str:
+    inputs = processor(image.convert("RGB"), return_tensors="pt")
+    with torch.no_grad():
+        output_ids = model.generate(
+            **inputs,
+            max_new_tokens=60,
+            min_new_tokens=12,
+            num_beams=5,
+            repetition_penalty=1.5,
+            no_repeat_ngram_size=3,
+            length_penalty=1.4,
+        )
+    return processor.decode(output_ids[0], skip_special_tokens=True)
 
 
 def preprocess(image: Image.Image) -> torch.Tensor:
@@ -50,18 +92,77 @@ def caption_image(model: CaptionModel, image: Image.Image, decoding_mode: str) -
     return model.generate_beam(image_tensor, beam_width=3)
 
 
+def caption_image_claude(client: anthropic.Anthropic, image: Image.Image) -> str:
+    buffer = io.BytesIO()
+    image.convert("RGB").save(buffer, format="JPEG")
+    image_b64 = base64.standard_b64encode(buffer.getvalue()).decode("utf-8")
+
+    response = client.messages.create(
+        model=CLAUDE_MODEL,
+        max_tokens=300,
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_b64}},
+                {"type": "text", "text": DETAILED_DESCRIPTION_PROMPT},
+            ],
+        }],
+    )
+    return response.content[0].text
+
+
 st.set_page_config(page_title="Image Caption Generator", page_icon="🖼️")
 st.title("🖼️ Multimodal Image Caption Generator")
-st.caption("ResNet encoder + attention mechanism + LSTM decoder, trained on Flickr8k")
 
-try:
-    model = load_model()
-    model_loaded = True
-except FileNotFoundError:
-    model_loaded = False
-    st.warning("No trained checkpoint found yet (best_checkpoint.pth). "
-               "Train the model first (see notebooks/train_colab.ipynb), then "
-               "place the checkpoint in this folder.")
+BACKEND_CUSTOM = "🎓 My trained model (ResNet + attention + LSTM, built from scratch)"
+BACKEND_BLIP = "BLIP (external pretrained model, reference only)"
+BACKEND_CLAUDE = "Claude (external pretrained model, most detailed, reference only)"
+
+backend = st.radio("Captioning model", [BACKEND_CUSTOM, BACKEND_BLIP, BACKEND_CLAUDE])
+
+if backend == BACKEND_CUSTOM:
+    st.caption("**This is the model this project is about**: a ResNet encoder + Bahdanau attention + LSTM "
+               "decoder, designed, trained, and evaluated from scratch by me (see README for architecture, "
+               "training results, and honestly-documented limitations, e.g. hallucination on out-of-distribution "
+               "scenes). Currently running the 50k-image COCO checkpoint (BLEU-4 0.2195, CIDEr 0.6680 on held-out "
+               "test data — see README Results). Shorter, more generic captions than the options below — that's "
+               "a real, expected consequence of training on tens of thousands of images instead of hundreds of "
+               "millions.")
+elif backend == BACKEND_BLIP:
+    st.caption("Not trained by me — Salesforce's pretrained BLIP, shown for comparison and practical use. "
+               "Short but accurate one-line captions, runs locally, free.")
+else:
+    st.caption("Not trained by me — calls the Anthropic API (Claude), shown for comparison and practical use "
+               "when you want the most detailed, accurate result. Requires your own API key; costs a small "
+               "amount per image.")
+
+model_loaded = True
+model = None
+blip_processor = blip_model = None
+claude_client = None
+
+if backend == BACKEND_CLAUDE:
+    api_key = os.environ.get("ANTHROPIC_API_KEY") or st.text_input(
+        "Anthropic API key", type="password",
+        help="Not set in the environment. Get one at https://console.anthropic.com/settings/keys — "
+             "or set ANTHROPIC_API_KEY before launching the app to skip this prompt.",
+    )
+    if api_key:
+        claude_client = anthropic.Anthropic(api_key=api_key)
+    else:
+        model_loaded = False
+        st.warning("Enter an Anthropic API key above to use this backend.")
+elif backend == BACKEND_BLIP:
+    with st.spinner("Loading BLIP model (first run downloads ~1.8GB)..."):
+        blip_processor, blip_model = load_blip()
+else:
+    try:
+        model = load_model()
+    except FileNotFoundError:
+        model_loaded = False
+        st.warning("No trained checkpoint found yet (best_checkpoint.pth). "
+                   "Train the model first (see notebooks/train_colab.ipynb), then "
+                   "place the checkpoint in this folder.")
 
 uploaded_files = st.file_uploader(
     "Upload one or more images", type=["jpg", "jpeg", "png"],
@@ -69,15 +170,21 @@ uploaded_files = st.file_uploader(
 )
 
 if uploaded_files and model_loaded:
-    decoding_mode = st.radio("Decoding strategy", ["Greedy", "Beam search (width 3)"])
+    if backend == BACKEND_CUSTOM:
+        decoding_mode = st.radio("Decoding strategy", ["Greedy", "Beam search (width 3)"])
 
     for uploaded_file in uploaded_files:
         image = Image.open(uploaded_file)
         col_image, col_caption = st.columns([1, 2])
         with col_image:
-            st.image(image, caption=uploaded_file.name, use_container_width=True)
+            st.image(image, caption=uploaded_file.name, width="stretch")
         with col_caption:
             with st.spinner(f"Generating caption for {uploaded_file.name}..."):
-                caption = caption_image(model, image, decoding_mode)
+                if backend == BACKEND_CLAUDE:
+                    caption = caption_image_claude(claude_client, image)
+                elif backend == BACKEND_BLIP:
+                    caption = caption_image_blip(blip_processor, blip_model, image)
+                else:
+                    caption = caption_image(model, image, decoding_mode)
             st.success(f"**Caption:** {caption}")
         st.divider()

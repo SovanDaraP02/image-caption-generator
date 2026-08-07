@@ -16,6 +16,40 @@ generated word.
 ## Live demo
 [Link to Hugging Face Spaces deployment — add once deployed, see `DEPLOY_SPACES.md`]
 
+The Streamlit app (`app.py`) offers three captioning backends,
+selectable in the UI. **The model this project is actually about is
+the custom one** — the ResNet + Bahdanau attention + LSTM decoder
+described below, designed, trained, and evaluated from scratch on
+Flickr8k/COCO. It's the default, and it's the one with real BLEU/
+METEOR/CIDEr numbers in the Results section. The other two are
+off-the-shelf pretrained models, included so the live demo still gives
+a good result on photos outside Flickr8k's narrow distribution — they
+are not part of this project's ML work, and the UI labels them as such.
+
+- **🎓 My trained model (default)** — this project's own architecture.
+  Shorter, more generic captions than the options below, and
+  occasional hallucination on out-of-distribution scenes — an honest,
+  expected consequence of training on a few thousand images instead of
+  hundreds of millions (see Limitations).
+- **BLIP (external, reference only)** — Salesforce's
+  `blip-image-captioning-large`, pretrained on ~14M image-text pairs.
+  Short but accurate one-line captions, free, runs locally, no API key
+  needed.
+- **Claude (external, reference only)** — calls the Anthropic API with
+  the image and a prompt asking for a full paragraph naming every
+  object, its color/material, spatial position, and the environment
+  itself. The most detailed option, and the only one that resembles
+  hand-written photo-catalog description — caption models (BLIP, and
+  this project's own model) are trained on short reference captions
+  and structurally cannot produce that regardless of how much they're
+  trained; instruction-tuned vision-language models are a different
+  task. Requires an `ANTHROPIC_API_KEY` (entered in the UI or set as
+  an environment variable before launch); costs a small amount per
+  image.
+
+All three backends support uploading one or multiple images at once;
+each gets its own caption in the results list.
+
 ## Architecture
 
 ```
@@ -70,7 +104,26 @@ flowchart LR
 
 ## Results
 
-Evaluated on the Flickr8k test split (1,000 images, 5 reference captions each):
+`best_checkpoint.pth` (the checkpoint shipped in this repo and loaded
+by default in `app.py`'s "My trained model" backend) is now the
+**COCO-trained** model, evaluated on a held-out 3,000-image test split
+(Karpathy split) it never saw during training:
+
+| Metric | Score |
+|---|---|
+| BLEU-1 | 0.6363 |
+| BLEU-2 | 0.4600 |
+| BLEU-3 | 0.3188 |
+| BLEU-4 | 0.2195 |
+| CIDEr | 0.6680 |
+
+Trained for 10 epochs (best checkpoint at epoch 9, `val_loss=2.4650`)
+on 50,000 COCO training images locally on an Apple M4 Pro (MPS) via
+`scripts/train_local_coco.py` — see "Three ways to train" below.
+METEOR skipped (see Engineering notes).
+
+The original Flickr8k-only checkpoint is kept for comparison at
+`best_checkpoint_flickr8k.pth`:
 
 | Metric | Score |
 |---|---|
@@ -84,32 +137,49 @@ Evaluated on the Flickr8k test split (1,000 images, 5 reference captions each):
 Trained for 13 epochs (early-stopped; best checkpoint at epoch 9,
 `val_loss=2.7392`) on a T4 GPU via `notebooks/train_colab.ipynb`.
 
-## Two training tiers
+Switching from Flickr8k (6k images) to COCO (50k images) is a real,
+measured improvement, not just a differently-biased model: **+38%
+BLEU-4, +48% CIDEr**. This is the strongest evidence in this repo that
+captioning quality here is data-limited, not architecture-limited —
+the same encoder/attention/decoder code produced a better model purely
+from a larger, more varied dataset. It's still well short of a
+production-scale pretrained model (see the README section on `app.py`'s
+BLIP/Claude backends above) — 50k images is orders of magnitude below
+the hundreds of millions those are trained on — but it's a genuine,
+verified step up from the original baseline.
 
-This repo supports training the same architecture on two datasets of
-very different scale, deliberately kept as separate notebooks rather
-than one config flag, so both results stand on their own:
+## Three ways to train
 
-| | Flickr8k (baseline) | COCO (scaled) |
-|---|---|---|
-| Notebook | `notebooks/train_colab.ipynb` | `notebooks/train_colab_coco.ipynb` |
-| Training images | ~6,000 | up to 50,000 (configurable) |
-| Split | ad-hoc 80/10/10 | Karpathy split (matches published baselines) |
-| Runtime | ~30-60 min | several hours (download + train) |
-| Known failure mode | hallucinates objects/people on scenes outside Flickr8k's narrow people/animal-heavy distribution (see Limitations) | tests whether more scene diversity fixes that |
+Same architecture, same `train_one_epoch`/`validate` loop, three
+different places to run it — pick based on what hardware you have:
 
-The Flickr8k run is what produced the Results table above. The COCO
-notebook exists specifically to test the hallucination finding from
-that run against a much larger, more diverse dataset:
+| | Flickr8k (baseline) | COCO via Colab/Kaggle | COCO via local script |
+|---|---|---|---|
+| Entry point | `notebooks/train_colab.ipynb` | `notebooks/train_colab_coco.ipynb` / `notebooks/train_kaggle_coco.ipynb` | `scripts/train_local_coco.py` |
+| Training images | ~6,000 | up to 50,000 (configurable) | up to 50,000 (configurable) |
+| Split | ad-hoc 80/10/10 | Karpathy split | Karpathy split |
+| Where it runs | Colab free-tier GPU | Colab/Kaggle free-tier GPU | your own machine (CUDA, Apple Silicon MPS, or CPU) |
+| Runtime | ~30-60 min | several hours, subject to session limits | ~35-40 min/epoch on an M4 Pro (MPS); no session limits, but ties up your machine |
+| Resumable | no | yes (Drive/Kaggle-output-backed) | yes (`data/coco/latest_checkpoint_coco.pth`) |
 
-| Metric | Flickr8k (6k train images) | COCO (50k train images) |
-|---|---|---|
-| BLEU-1 | — | 0.6307 |
-| BLEU-2 | — | 0.4528 |
-| BLEU-3 | — | 0.3121 |
-| BLEU-4 | 0.1585 | **0.2128** |
-| METEOR | 0.1953 | _skipped -- see Engineering notes_ |
-| CIDEr | 0.4521 | **0.6576** |
+`scripts/train_local_coco.py` exists for machines with usable local
+acceleration (CUDA or Apple Silicon MPS) where free-tier session limits
+are more friction than they're worth. It downloads the same
+`yerevann/coco-karpathy` Hugging Face dataset as the Colab/Kaggle
+notebooks, caches the resulting (image, caption) pairs to
+`data/coco/pairs_cache.json` so re-runs skip re-downloading, and saves
+a resumable checkpoint after every epoch — safe to interrupt (Ctrl-C,
+sleep, crash) and re-run.
+
+```bash
+python scripts/train_local_coco.py                    # full 50k/3k/3k run
+python scripts/train_local_coco.py --n-train 5000      # smaller/faster run
+```
+
+If running unattended for hours, keep the machine from sleeping mid-run
+(sleep pauses the process but the wall-clock timer in the epoch log
+keeps counting, which is misleading, not a bug) — e.g.
+`caffeinate -i -w <pid>` on macOS.
 
 More diverse training data produced a meaningfully better model, not
 just a differently-biased one: BLEU-4 improved ~34%, CIDEr ~45%,
