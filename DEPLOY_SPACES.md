@@ -46,6 +46,24 @@ git push
 (Hugging Face repos use Git LFS automatically for large files over 10MB —
 no extra setup needed.)
 
+## 3b. Restrict the public demo to the fast backends
+
+Free-tier Spaces hardware is CPU-only, no GPU. BLIP-2 (2.7B params)
+falls back to float32 there and takes minutes per image — a bad first
+impression for someone testing the link live. Claude works but costs
+API credits on every visitor's request. Your own trained model and
+BLIP are both small and fast even on CPU, so for a public link, hide
+the other two:
+
+On the Space page → **Settings → Variables and secrets → New variable**:
+- Name: `PUBLIC_DEMO`
+- Value: `true`
+
+This restricts the "Captioning model" picker to just your trained
+model and BLIP. Leave it unset (or `false`) for local use, where you
+have all four backends including BLIP-2 (fast there, via GPU/Apple
+Silicon fp16) and Claude.
+
 ## 4. Check it built
 
 Open the Space URL — it takes 1-2 minutes to build the first time. If it

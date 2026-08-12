@@ -161,7 +161,17 @@ BACKEND_BLIP = "BLIP (external pretrained model, reference only)"
 BACKEND_BLIP2 = "BLIP-2 (external pretrained model, richer but slow on CPU, reference only)"
 BACKEND_CLAUDE = "Claude (external pretrained model, most detailed, reference only)"
 
-backend = st.radio("Captioning model", [BACKEND_CUSTOM, BACKEND_BLIP, BACKEND_BLIP2, BACKEND_CLAUDE])
+# PUBLIC_DEMO=true (set as a Space variable on the deployed public link) hides
+# BLIP-2 and Claude: BLIP-2 is unusably slow on free-tier CPU-only hosting
+# (no GPU means no fp16 speedup), and Claude costs API credits per request
+# from every visitor. Both stay available for local use, where neither
+# limitation applies.
+if os.environ.get("PUBLIC_DEMO", "false").lower() == "true":
+    available_backends = [BACKEND_CUSTOM, BACKEND_BLIP]
+else:
+    available_backends = [BACKEND_CUSTOM, BACKEND_BLIP, BACKEND_BLIP2, BACKEND_CLAUDE]
+
+backend = st.radio("Captioning model", available_backends)
 
 if backend == BACKEND_CUSTOM:
     st.caption("**This is the model this project is about**: a ResNet encoder + Bahdanau attention + LSTM "
