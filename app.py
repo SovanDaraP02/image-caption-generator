@@ -15,7 +15,12 @@ import streamlit as st
 import torch
 import torchvision.transforms as T
 from PIL import Image
-from transformers import BlipForConditionalGeneration, BlipProcessor
+from transformers import (
+    Blip2ForConditionalGeneration,
+    Blip2Processor,
+    BlipForConditionalGeneration,
+    BlipProcessor,
+)
 
 from caption_generator.data.vocabulary import Vocabulary
 from caption_generator.models.caption_model import CaptionModel
@@ -23,13 +28,18 @@ from caption_generator.models.decoder import DecoderWithAttention
 from caption_generator.models.encoder import EncoderCNN
 
 BLIP_CHECKPOINT = "Salesforce/blip-image-captioning-large"
+BLIP2_CHECKPOINT = "Salesforce/blip2-opt-2.7b"
 CLAUDE_MODEL = "claude-sonnet-5"
 DETAILED_DESCRIPTION_PROMPT = (
-    "Describe this image in one detailed paragraph, as if writing a real-estate "
-    "or photo-catalog description. Name every distinct subject and object you can "
-    "see (people, furniture, plants, animals, etc.), their colors and materials, "
-    "and their spatial position in the frame (e.g. front left, center, background). "
-    "Describe the environment/setting itself (room type, flooring, walls, lighting). "
+    "Describe this image in one plain, natural paragraph, like you're telling a "
+    "friend what's in the photo. Mention the people, objects, and setting you "
+    "actually see, roughly where they are in the frame, and any colors or "
+    "materials that stand out -- but only if they'd naturally come up, not as a "
+    "checklist. Write in plain, ordinary language.\n\n"
+    "Avoid AI-sounding filler: don't open with 'This image shows/features/"
+    "captures', don't use words like 'vibrant', 'nestled', 'boasts', 'a testament "
+    "to', or end with a summarizing 'overall' sentence. Just describe what's "
+    "there, the way a person would.\n\n"
     "Only state what is actually visible -- do not guess at things you can't see, "
     "and do not invent people or objects that aren't present."
 )
@@ -75,6 +85,32 @@ def caption_image_blip(processor: BlipProcessor, model: BlipForConditionalGenera
     return processor.decode(output_ids[0], skip_special_tokens=True)
 
 
+def get_device() -> torch.device:
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
+@st.cache_resource
+def load_blip2() -> tuple[Blip2Processor, Blip2ForConditionalGeneration, torch.device]:
+    device = get_device()
+    processor = Blip2Processor.from_pretrained(BLIP2_CHECKPOINT)
+    model = Blip2ForConditionalGeneration.from_pretrained(BLIP2_CHECKPOINT, torch_dtype=torch.float32)
+    model.eval()
+    model.to(device)
+    return processor, model, device
+
+
+def caption_image_blip2(processor: Blip2Processor, model: Blip2ForConditionalGeneration,
+                         device: torch.device, image: Image.Image) -> str:
+    inputs = processor(image.convert("RGB"), return_tensors="pt").to(device)
+    with torch.no_grad():
+        output_ids = model.generate(**inputs, max_new_tokens=60, num_beams=3)
+    return processor.decode(output_ids[0], skip_special_tokens=True).strip()
+
+
 def preprocess(image: Image.Image) -> torch.Tensor:
     transform = T.Compose([
         T.Resize((224, 224)),
@@ -116,21 +152,26 @@ st.title("🖼️ Multimodal Image Caption Generator")
 
 BACKEND_CUSTOM = "🎓 My trained model (ResNet + attention + LSTM, built from scratch)"
 BACKEND_BLIP = "BLIP (external pretrained model, reference only)"
+BACKEND_BLIP2 = "BLIP-2 (external pretrained model, richer but slow on CPU, reference only)"
 BACKEND_CLAUDE = "Claude (external pretrained model, most detailed, reference only)"
 
-backend = st.radio("Captioning model", [BACKEND_CUSTOM, BACKEND_BLIP, BACKEND_CLAUDE])
+backend = st.radio("Captioning model", [BACKEND_CUSTOM, BACKEND_BLIP, BACKEND_BLIP2, BACKEND_CLAUDE])
 
 if backend == BACKEND_CUSTOM:
     st.caption("**This is the model this project is about**: a ResNet encoder + Bahdanau attention + LSTM "
                "decoder, designed, trained, and evaluated from scratch by me (see README for architecture, "
                "training results, and honestly-documented limitations, e.g. hallucination on out-of-distribution "
-               "scenes). Currently running the 50k-image COCO checkpoint (BLEU-4 0.2195, CIDEr 0.6680 on held-out "
+               "scenes). Trained on the full 113k-image COCO split (BLEU-4 0.2215, CIDEr 0.6781 on held-out "
                "test data — see README Results). Shorter, more generic captions than the options below — that's "
-               "a real, expected consequence of training on tens of thousands of images instead of hundreds of "
-               "millions.")
+               "a real, expected consequence of training on ~100k images instead of hundreds of millions.")
 elif backend == BACKEND_BLIP:
-    st.caption("Not trained by me — Salesforce's pretrained BLIP, shown for comparison and practical use. "
-               "Short but accurate one-line captions, runs locally, free.")
+    st.caption("Not trained by me — Salesforce's pretrained BLIP (~470M params), shown for comparison and "
+               "practical use. Short but accurate one-line captions, fast even on CPU, free.")
+elif backend == BACKEND_BLIP2:
+    st.caption("Not trained by me — Salesforce's pretrained BLIP-2 (~2.7B params, language-model backbone), "
+               "shown for comparison. Richer captions than BLIP-large, but noticeably slower, especially on "
+               "CPU-only hosting (e.g. free-tier Hugging Face Spaces) — better suited to local use with a GPU "
+               "or Apple Silicon than a public low-resource deployment.")
 else:
     st.caption("Not trained by me — calls the Anthropic API (Claude), shown for comparison and practical use "
                "when you want the most detailed, accurate result. Requires your own API key; costs a small "
@@ -139,6 +180,7 @@ else:
 model_loaded = True
 model = None
 blip_processor = blip_model = None
+blip2_processor = blip2_model = blip2_device = None
 claude_client = None
 
 if backend == BACKEND_CLAUDE:
@@ -155,6 +197,9 @@ if backend == BACKEND_CLAUDE:
 elif backend == BACKEND_BLIP:
     with st.spinner("Loading BLIP model (first run downloads ~1.8GB)..."):
         blip_processor, blip_model = load_blip()
+elif backend == BACKEND_BLIP2:
+    with st.spinner("Loading BLIP-2 model (first run downloads ~10GB, and generation is slow on CPU)..."):
+        blip2_processor, blip2_model, blip2_device = load_blip2()
 else:
     try:
         model = load_model()
@@ -184,6 +229,8 @@ if uploaded_files and model_loaded:
                     caption = caption_image_claude(claude_client, image)
                 elif backend == BACKEND_BLIP:
                     caption = caption_image_blip(blip_processor, blip_model, image)
+                elif backend == BACKEND_BLIP2:
+                    caption = caption_image_blip2(blip2_processor, blip2_model, blip2_device, image)
                 else:
                     caption = caption_image(model, image, decoding_mode)
             st.success(f"**Caption:** {caption}")

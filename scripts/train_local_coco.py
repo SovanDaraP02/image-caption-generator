@@ -181,19 +181,30 @@ def main() -> None:
     start_epoch = 1
 
     if os.path.exists(LATEST_PATH):
-        print(f"Found a previous run's checkpoint at {LATEST_PATH} -- resuming instead of starting over.")
         ckpt = torch.load(LATEST_PATH, map_location=device)
-        encoder.load_state_dict(ckpt["encoder_state"])
-        decoder.load_state_dict(ckpt["decoder_state"])
-        optimizer.load_state_dict(ckpt["optimizer_state"])
-        scheduler.load_state_dict(ckpt["scheduler_state"])
-        vocab.word2idx = ckpt["vocab_word2idx"]
-        vocab.idx2word = ckpt["vocab_idx2word"]
-        pad_idx = vocab.word2idx[vocab.PAD_TOKEN]
-        best_val_loss = ckpt["best_val_loss"]
-        epochs_without_improvement = ckpt["epochs_without_improvement"]
-        start_epoch = ckpt["epoch"] + 1
-        print(f"Resuming from epoch {start_epoch}, best_val_loss so far = {best_val_loss:.4f}")
+        checkpoint_vocab_size = len(ckpt["vocab_word2idx"])
+        if checkpoint_vocab_size != len(vocab):
+            # Vocab is derived from this run's specific training corpus (--n-train
+            # etc.), so a checkpoint from a different-sized run has incompatible
+            # embedding/output layer shapes -- resuming would corrupt training
+            # rather than continue it. Safer to start fresh and warn loudly than
+            # to silently resume with a mismatched vocab or crash mid-run.
+            print(f"WARNING: found {LATEST_PATH}, but its vocab size ({checkpoint_vocab_size}) doesn't "
+                  f"match this run's vocab ({len(vocab)}) -- it's from a different-sized run. "
+                  "Starting fresh instead of resuming. Move or delete that file to silence this warning.")
+        else:
+            print(f"Found a previous run's checkpoint at {LATEST_PATH} -- resuming instead of starting over.")
+            encoder.load_state_dict(ckpt["encoder_state"])
+            decoder.load_state_dict(ckpt["decoder_state"])
+            optimizer.load_state_dict(ckpt["optimizer_state"])
+            scheduler.load_state_dict(ckpt["scheduler_state"])
+            vocab.word2idx = ckpt["vocab_word2idx"]
+            vocab.idx2word = ckpt["vocab_idx2word"]
+            pad_idx = vocab.word2idx[vocab.PAD_TOKEN]
+            best_val_loss = ckpt["best_val_loss"]
+            epochs_without_improvement = ckpt["epochs_without_improvement"]
+            start_epoch = ckpt["epoch"] + 1
+            print(f"Resuming from epoch {start_epoch}, best_val_loss so far = {best_val_loss:.4f}")
     else:
         print("No previous checkpoint found -- starting fresh.")
 

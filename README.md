@@ -105,48 +105,58 @@ flowchart LR
 ## Results
 
 `best_checkpoint.pth` (the checkpoint shipped in this repo and loaded
-by default in `app.py`'s "My trained model" backend) is now the
-**COCO-trained** model, evaluated on a held-out 3,000-image test split
-(Karpathy split) it never saw during training:
+by default in `app.py`'s "My trained model" backend) is trained on the
+**full 113,000-image COCO Karpathy train split**, evaluated on a
+held-out 5,000-image test split it never saw during training:
 
 | Metric | Score |
 |---|---|
-| BLEU-1 | 0.6363 |
-| BLEU-2 | 0.4600 |
-| BLEU-3 | 0.3188 |
-| BLEU-4 | 0.2195 |
-| CIDEr | 0.6680 |
+| BLEU-1 | 0.6440 |
+| BLEU-2 | 0.4650 |
+| BLEU-3 | 0.3221 |
+| BLEU-4 | 0.2215 |
+| CIDEr | 0.6781 |
 
-Trained for 10 epochs (best checkpoint at epoch 9, `val_loss=2.4650`)
-on 50,000 COCO training images locally on an Apple M4 Pro (MPS) via
-`scripts/train_local_coco.py` — see "Three ways to train" below.
-METEOR skipped (see Engineering notes).
+Trained for 10 epochs (best checkpoint at epoch 10, `val_loss=2.3796`)
+locally on an Apple M4 Pro (MPS) via `scripts/train_local_coco.py` —
+see "Three ways to train" below. METEOR skipped (see Engineering
+notes).
 
-The original Flickr8k-only checkpoint is kept for comparison at
-`best_checkpoint_flickr8k.pth`:
+Two earlier checkpoints are kept for comparison — `best_checkpoint_flickr8k.pth`
+(original, 6k Flickr8k images) and `best_checkpoint_coco_50k.pth` (50k
+COCO images, an intermediate run):
 
-| Metric | Score |
-|---|---|
-| BLEU-1 | 0.5517 |
-| BLEU-2 | 0.3737 |
-| BLEU-3 | 0.2437 |
-| BLEU-4 | 0.1585 |
-| METEOR | 0.1953 |
-| CIDEr | 0.4521 |
+| Metric | Flickr8k (6k) | COCO 50k | **COCO 113k (current)** |
+|---|---|---|---|
+| BLEU-1 | 0.5517 | 0.6363 | **0.6440** |
+| BLEU-2 | 0.3737 | 0.4600 | **0.4650** |
+| BLEU-3 | 0.2437 | 0.3188 | **0.3221** |
+| BLEU-4 | 0.1585 | 0.2195 | **0.2215** |
+| METEOR | 0.1953 | _skipped_ | _skipped_ |
+| CIDEr | 0.4521 | 0.6680 | **0.6781** |
 
-Trained for 13 epochs (early-stopped; best checkpoint at epoch 9,
-`val_loss=2.7392`) on a T4 GPU via `notebooks/train_colab.ipynb`.
+Two honest findings from these three runs, not one:
 
-Switching from Flickr8k (6k images) to COCO (50k images) is a real,
-measured improvement, not just a differently-biased model: **+38%
-BLEU-4, +48% CIDEr**. This is the strongest evidence in this repo that
-captioning quality here is data-limited, not architecture-limited —
-the same encoder/attention/decoder code produced a better model purely
-from a larger, more varied dataset. It's still well short of a
-production-scale pretrained model (see the README section on `app.py`'s
-BLIP/Claude backends above) — 50k images is orders of magnitude below
-the hundreds of millions those are trained on — but it's a genuine,
-verified step up from the original baseline.
+- **6k → 50k images: a large, real improvement** (+38% BLEU-4, +48%
+  CIDEr). This is the strongest evidence in this repo that captioning
+  quality here is data-limited, not architecture-limited — the same
+  encoder/attention/decoder code produced a meaningfully better model
+  purely from a larger, more varied dataset.
+- **50k → 113k images: a much smaller improvement** (+0.9% BLEU-4,
+  +1.5% CIDEr), and validation loss visibly plateaued in the last 3
+  epochs of the 113k run. More than doubling the training data bought
+  a real but small gain, not another proportional jump — classic
+  diminishing returns for this architecture/capacity, not a bug or a
+  failed run.
+
+Both runs are still well short of a production-scale pretrained model
+(see the README section on `app.py`'s BLIP/BLIP-2/Claude backends
+above) — even 113k images is orders of magnitude below the hundreds of
+millions those are trained on — but the 6k→113k progression is a
+genuine, verified step up from the original baseline, with the
+diminishing-returns finding as real signal about where this
+architecture's ceiling is without a fundamentally larger dataset or a
+different decoder (see Roadmap).
 
 ## Three ways to train
 
@@ -156,10 +166,10 @@ different places to run it — pick based on what hardware you have:
 | | Flickr8k (baseline) | COCO via Colab/Kaggle | COCO via local script |
 |---|---|---|---|
 | Entry point | `notebooks/train_colab.ipynb` | `notebooks/train_colab_coco.ipynb` / `notebooks/train_kaggle_coco.ipynb` | `scripts/train_local_coco.py` |
-| Training images | ~6,000 | up to 50,000 (configurable) | up to 50,000 (configurable) |
+| Training images | ~6,000 | up to 50,000 (configurable) | up to 113,000 (full Karpathy train split, configurable) |
 | Split | ad-hoc 80/10/10 | Karpathy split | Karpathy split |
 | Where it runs | Colab free-tier GPU | Colab/Kaggle free-tier GPU | your own machine (CUDA, Apple Silicon MPS, or CPU) |
-| Runtime | ~30-60 min | several hours, subject to session limits | ~35-40 min/epoch on an M4 Pro (MPS); no session limits, but ties up your machine |
+| Runtime | ~30-60 min | several hours, subject to session limits | ~35-40 min/epoch at 50k images, ~80 min/epoch at 113k images, on an M4 Pro (MPS); no session limits, but ties up your machine for hours |
 | Resumable | no | yes (Drive/Kaggle-output-backed) | yes (`data/coco/latest_checkpoint_coco.pth`) |
 
 `scripts/train_local_coco.py` exists for machines with usable local
@@ -169,25 +179,39 @@ are more friction than they're worth. It downloads the same
 notebooks, caches the resulting (image, caption) pairs to
 `data/coco/pairs_cache.json` so re-runs skip re-downloading, and saves
 a resumable checkpoint after every epoch — safe to interrupt (Ctrl-C,
-sleep, crash) and re-run.
+sleep, crash, an actual machine reboot) and re-run.
 
 ```bash
-python scripts/train_local_coco.py                    # full 50k/3k/3k run
-python scripts/train_local_coco.py --n-train 5000      # smaller/faster run
+python scripts/train_local_coco.py --n-train 113000 --n-val 5000 --n-test 5000  # full run (what produced best_checkpoint.pth)
+python scripts/train_local_coco.py --n-train 5000                                # smaller/faster run
 ```
 
-If running unattended for hours, keep the machine from sleeping mid-run
-(sleep pauses the process but the wall-clock timer in the epoch log
-keeps counting, which is misleading, not a bug) — e.g.
-`caffeinate -i -w <pid>` on macOS.
+Three things learned running this for real, multi-hour, unattended:
 
-More diverse training data produced a meaningfully better model, not
-just a differently-biased one: BLEU-4 improved ~34%, CIDEr ~45%,
-trained on a Kaggle Notebook (30 GPU-hours/week free tier, 10 epochs,
-resumable via checkpoint across sessions). This is the strongest
-evidence in this repo that captioning quality here is data-limited,
-not architecture-limited — the same encoder/attention/decoder code
-produced a better model purely from a larger, more varied dataset.
+- **Keep the machine from sleeping mid-run** — sleep pauses the
+  process but the wall-clock timer in the epoch log keeps counting
+  through the sleep, which looks like a huge slowdown but isn't. Use
+  `caffeinate -i -w <pid>` on macOS.
+- **A reboot kills the run** (it's a plain background process, not a
+  daemon) — but nothing is lost: the image cache and pairs cache
+  survive on disk, so re-running just skips the download and resumes
+  training from the last saved epoch.
+- **A checkpoint from a differently-sized run cannot be resumed into a
+  new run** — vocab size depends on the training corpus, so
+  `latest_checkpoint_coco.pth` from a 50k run has incompatible
+  embedding/output-layer shapes for a 113k run. The script now detects
+  a vocab-size mismatch and starts fresh with a warning instead of
+  crashing (or, worse, silently loading corrupted weights) — but move
+  or delete a previous run's `data/coco/latest_checkpoint_coco.pth`
+  before starting a differently-sized run to avoid the warning
+  entirely.
+- If training seems to be running far slower than expected with no
+  errors, check for unrelated system load before assuming the script
+  is broken — in one run here, macOS Spotlight indexing the freshly
+  downloaded 113k-image dataset (`mediaanalysisd`/`spotlightknowledged`
+  at 80-97% CPU) was the actual cause, not the training code. Fixed
+  with a `data/coco/.metadata_never_index` marker file (standard macOS
+  mechanism to exclude a directory from Spotlight, no `sudo` needed).
 
 ### A note on where the COCO run actually executes
 
