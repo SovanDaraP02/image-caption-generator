@@ -96,8 +96,13 @@ def get_device() -> torch.device:
 @st.cache_resource
 def load_blip2() -> tuple[Blip2Processor, Blip2ForConditionalGeneration, torch.device]:
     device = get_device()
+    # float16 on GPU/MPS: halves memory footprint (~11GB -> ~5.5GB) and is
+    # standard practice for inference -- output quality is not meaningfully
+    # affected. CPU-only stays float32 since many CPU kernels don't support
+    # fp16 well (would be slower, not faster, there).
+    dtype = torch.float16 if device.type in ("cuda", "mps") else torch.float32
     processor = Blip2Processor.from_pretrained(BLIP2_CHECKPOINT)
-    model = Blip2ForConditionalGeneration.from_pretrained(BLIP2_CHECKPOINT, torch_dtype=torch.float32)
+    model = Blip2ForConditionalGeneration.from_pretrained(BLIP2_CHECKPOINT, torch_dtype=dtype)
     model.eval()
     model.to(device)
     return processor, model, device
@@ -106,6 +111,7 @@ def load_blip2() -> tuple[Blip2Processor, Blip2ForConditionalGeneration, torch.d
 def caption_image_blip2(processor: Blip2Processor, model: Blip2ForConditionalGeneration,
                          device: torch.device, image: Image.Image) -> str:
     inputs = processor(image.convert("RGB"), return_tensors="pt").to(device)
+    inputs["pixel_values"] = inputs["pixel_values"].to(model.dtype)
     with torch.no_grad():
         output_ids = model.generate(**inputs, max_new_tokens=60, num_beams=3)
     return processor.decode(output_ids[0], skip_special_tokens=True).strip()
@@ -169,9 +175,10 @@ elif backend == BACKEND_BLIP:
                "practical use. Short but accurate one-line captions, fast even on CPU, free.")
 elif backend == BACKEND_BLIP2:
     st.caption("Not trained by me — Salesforce's pretrained BLIP-2 (~2.7B params, language-model backbone), "
-               "shown for comparison. Richer captions than BLIP-large, but noticeably slower, especially on "
-               "CPU-only hosting (e.g. free-tier Hugging Face Spaces) — better suited to local use with a GPU "
-               "or Apple Silicon than a public low-resource deployment.")
+               "shown for comparison. Richer captions than BLIP-large. Runs in float16 on GPU/Apple Silicon "
+               "(~6s/image measured locally) but falls back to float32 on CPU-only hosting (e.g. free-tier "
+               "Hugging Face Spaces), where it's much slower — better suited to local use with a GPU or Apple "
+               "Silicon than a public low-resource deployment.")
 else:
     st.caption("Not trained by me — calls the Anthropic API (Claude), shown for comparison and practical use "
                "when you want the most detailed, accurate result. Requires your own API key; costs a small "
