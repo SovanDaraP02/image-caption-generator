@@ -5,9 +5,12 @@
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.x-ee4c2c)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-A ResNet-50 (or ResNet-101/152 — swappable) encoder + Bahdanau attention +
-LSTM decoder, trained on Flickr8k, following *Show, Attend and Tell*
-(Xu et al., 2015).
+A CLIP ViT-B/32 (or ResNet-50/101/152 — swappable, see Design decisions)
+encoder + Bahdanau attention + LSTM decoder, following *Show, Attend
+and Tell* (Xu et al., 2015), trained on progressively larger/more
+diverse data (Flickr8k → COCO 50k → COCO 113k) and, separately, a
+progressively better-aligned encoder (ResNet → CLIP) — see Results for
+the full experimental progression.
 
 Given an image, the model generates a natural-language caption while
 learning to attend to different spatial regions of the image for each
@@ -86,11 +89,20 @@ flowchart LR
   easier to reason about end-to-end. A Transformer decoder with
   cross-attention to the 49 image tokens is a natural next step once
   there's a larger dataset to justify it (see Roadmap).
-- **Frozen encoder**: the ResNet backbone stays frozen throughout
-  training rather than fine-tuning end-to-end. On a dataset this small,
-  unfreezing the whole network risks catastrophic forgetting of the
-  pretrained ImageNet features; `EncoderCNN(fine_tune=True)` unfreezes
-  only the last residual block as a middle ground.
+- **Frozen encoder**: both `EncoderCNN` and `EncoderCLIP` stay frozen
+  throughout training rather than fine-tuning end-to-end. On a dataset
+  this small, unfreezing the whole network risks catastrophic
+  forgetting of the pretrained features; both encoders' `fine_tune=True`
+  unfreezes only their last block (residual block for ResNet,
+  transformer block for CLIP) as a middle ground.
+- **CLIP encoder over ResNet** (see Results): swapped in after the
+  50k→113k ResNet run showed diminishing returns from more data alone,
+  which raised a specific hypothesis — that ImageNet-classification
+  features (not language-aligned) had become the bottleneck, not data
+  volume. Re-running the same 113k images through a CLIP ViT-B/32
+  encoder confirmed it: +12.4% BLEU-4 over the ResNet run on identical
+  data. `EncoderCNN` is kept in the codebase (not deleted) specifically
+  so this comparison stays reproducible.
 - **Doubly stochastic attention regularization** (Xu et al. 2015,
   Section 4.2.1): the training loss includes a term encouraging the
   model to attend to every image region roughly equally over the course
@@ -105,58 +117,76 @@ flowchart LR
 ## Results
 
 `best_checkpoint.pth` (the checkpoint shipped in this repo and loaded
-by default in `app.py`'s "My trained model" backend) is trained on the
-**full 113,000-image COCO Karpathy train split**, evaluated on a
-held-out 5,000-image test split it never saw during training:
+by default in `app.py`'s "My trained model" backend) uses a **CLIP
+ViT-B/32 vision encoder**, swapped in from the original ImageNet-
+pretrained ResNet, trained on the full 113,000-image COCO Karpathy
+train split and evaluated on a held-out 5,000-image test split it
+never saw during training:
 
 | Metric | Score |
 |---|---|
-| BLEU-1 | 0.6440 |
-| BLEU-2 | 0.4650 |
-| BLEU-3 | 0.3221 |
-| BLEU-4 | 0.2215 |
-| CIDEr | 0.6781 |
+| BLEU-1 | 0.6789 |
+| BLEU-2 | 0.5036 |
+| BLEU-3 | 0.3564 |
+| BLEU-4 | 0.2490 |
+| CIDEr | 0.7729 |
 
-Trained for 10 epochs (best checkpoint at epoch 10, `val_loss=2.3796`)
-locally on an Apple M4 Pro (MPS) via `scripts/train_local_coco.py` —
-see "Three ways to train" below. METEOR skipped (see Engineering
-notes).
+Trained for 10 epochs (best checkpoint at epoch 9, `val_loss=2.2332`)
+locally on an Apple M4 Pro (MPS) via `scripts/train_local_coco.py
+--encoder clip-vit-base-patch32` — see "Three ways to train" below.
+METEOR skipped (see Engineering notes).
 
-Two earlier checkpoints are kept for comparison — `best_checkpoint_flickr8k.pth`
-(original, 6k Flickr8k images) and `best_checkpoint_coco_50k.pth` (50k
-COCO images, an intermediate run):
+Four checkpoints total, kept for comparison (`best_checkpoint_flickr8k.pth`,
+`best_checkpoint_coco_50k.pth`, `best_checkpoint_coco_113k_resnet.pth`,
+and the current CLIP-encoder one):
 
-| Metric | Flickr8k (6k) | COCO 50k | **COCO 113k (current)** |
-|---|---|---|---|
-| BLEU-1 | 0.5517 | 0.6363 | **0.6440** |
-| BLEU-2 | 0.3737 | 0.4600 | **0.4650** |
-| BLEU-3 | 0.2437 | 0.3188 | **0.3221** |
-| BLEU-4 | 0.1585 | 0.2195 | **0.2215** |
-| METEOR | 0.1953 | _skipped_ | _skipped_ |
-| CIDEr | 0.4521 | 0.6680 | **0.6781** |
+| Metric | Flickr8k (6k, ResNet) | COCO 50k (ResNet) | COCO 113k (ResNet) | **COCO 113k (CLIP encoder)** |
+|---|---|---|---|---|
+| BLEU-1 | 0.5517 | 0.6363 | 0.6440 | **0.6789** |
+| BLEU-2 | 0.3737 | 0.4600 | 0.4650 | **0.5036** |
+| BLEU-3 | 0.2437 | 0.3188 | 0.3221 | **0.3564** |
+| BLEU-4 | 0.1585 | 0.2195 | 0.2215 | **0.2490** |
+| METEOR | 0.1953 | _skipped_ | _skipped_ | _skipped_ |
+| CIDEr | 0.4521 | 0.6680 | 0.6781 | **0.7729** |
 
-Two honest findings from these three runs, not one:
+Three honest findings from these four runs, not one:
 
-- **6k → 50k images: a large, real improvement** (+38% BLEU-4, +48%
-  CIDEr). This is the strongest evidence in this repo that captioning
-  quality here is data-limited, not architecture-limited — the same
-  encoder/attention/decoder code produced a meaningfully better model
-  purely from a larger, more varied dataset.
-- **50k → 113k images: a much smaller improvement** (+0.9% BLEU-4,
-  +1.5% CIDEr), and validation loss visibly plateaued in the last 3
-  epochs of the 113k run. More than doubling the training data bought
-  a real but small gain, not another proportional jump — classic
-  diminishing returns for this architecture/capacity, not a bug or a
-  failed run.
+- **6k → 50k images (same ResNet encoder): a large, real improvement**
+  (+38% BLEU-4, +48% CIDEr). The same encoder/attention/decoder code
+  produced a meaningfully better model purely from a larger, more
+  varied dataset — evidence that quality was data-limited at this
+  point.
+- **50k → 113k images (same ResNet encoder): a much smaller
+  improvement** (+0.9% BLEU-4, +1.5% CIDEr), with validation loss
+  visibly plateauing in the last 3 epochs. More than doubling the
+  training data bought a real but small gain — classic diminishing
+  returns, and a signal that data volume had stopped being the
+  bottleneck.
+- **Same 113k images, ResNet → CLIP encoder: another large, real
+  improvement** (+12.4% BLEU-4, +14.0% CIDEr over the ResNet-113k
+  run — bigger than the entire 50k→113k data increase gave). This
+  is the direct test of the hypothesis the diminishing-returns finding
+  raised: if more data of the same kind wasn't helping much anymore,
+  maybe the *encoder* had become the bottleneck. `EncoderCNN`'s ResNet
+  backbone is pretrained via ImageNet classification (1000-way object
+  labels, no linguistic structure). `EncoderCLIP` is pretrained
+  contrastively to align images directly with their natural-language
+  captions (see `EncoderCLIP`'s docstring in
+  `src/caption_generator/models/encoder.py`) — features already
+  language-aligned before the decoder ever sees them, versus features
+  optimized for a completely different, non-linguistic objective.
+  Every training epoch scored better with CLIP than the equivalent
+  ResNet epoch, not just the final number, and validation loss
+  plateaued later in training than the ResNet run did.
 
-Both runs are still well short of a production-scale pretrained model
-(see the README section on `app.py`'s BLIP/BLIP-2/Claude backends
-above) — even 113k images is orders of magnitude below the hundreds of
-millions those are trained on — but the 6k→113k progression is a
-genuine, verified step up from the original baseline, with the
-diminishing-returns finding as real signal about where this
-architecture's ceiling is without a fundamentally larger dataset or a
-different decoder (see Roadmap).
+Together these three findings tell a coherent story: identify a
+plateau, form a specific hypothesis about *why* (data vs. architecture),
+run the controlled comparison, and let the result confirm or reject it.
+The 6k→113k→CLIP progression is still well short of a production-scale
+pretrained model (see `app.py`'s BLIP/BLIP-2/Claude backends above) —
+even 113k images is orders of magnitude below the hundreds of millions
+those are trained on — but it's a genuine, measured improvement at
+every step, not just more training for its own sake.
 
 ## Three ways to train
 
@@ -182,11 +212,20 @@ a resumable checkpoint after every epoch — safe to interrupt (Ctrl-C,
 sleep, crash, an actual machine reboot) and re-run.
 
 ```bash
-python scripts/train_local_coco.py --n-train 113000 --n-val 5000 --n-test 5000  # full run (what produced best_checkpoint.pth)
-python scripts/train_local_coco.py --n-train 5000                                # smaller/faster run
+python scripts/train_local_coco.py --encoder clip-vit-base-patch32 --n-train 113000 --n-val 5000 --n-test 5000  # full run (what produced best_checkpoint.pth)
+python scripts/train_local_coco.py --n-train 5000                                                                 # smaller/faster run, default ResNet encoder
 ```
 
-Three things learned running this for real, multi-hour, unattended:
+`--encoder` chooses between `resnet50` (default, `EncoderCNN`, ImageNet-
+classification pretraining) and `clip-vit-base-patch32` (`EncoderCLIP`,
+CLIP's contrastive image-text pretraining — see the Results section
+above for why this mattered here). Checkpoint filenames are suffixed
+by encoder (`best_checkpoint_coco_clip.pth` vs `best_checkpoint_coco.pth`)
+so the two can't clobber each other, and each checkpoint records which
+encoder produced it (`encoder_type` key) so `app.py`/`evaluate.py` load
+the right architecture and input normalization automatically.
+
+Four things learned running this for real, multi-hour, unattended:
 
 - **Keep the machine from sleeping mid-run** — sleep pauses the
   process but the wall-clock timer in the epoch log keeps counting
@@ -207,11 +246,20 @@ Three things learned running this for real, multi-hour, unattended:
   entirely.
 - If training seems to be running far slower than expected with no
   errors, check for unrelated system load before assuming the script
-  is broken — in one run here, macOS Spotlight indexing the freshly
-  downloaded 113k-image dataset (`mediaanalysisd`/`spotlightknowledged`
-  at 80-97% CPU) was the actual cause, not the training code. Fixed
-  with a `data/coco/.metadata_never_index` marker file (standard macOS
-  mechanism to exclude a directory from Spotlight, no `sudo` needed).
+  is broken. Two real causes hit here, both external to the training
+  code itself: macOS Spotlight indexing the freshly downloaded
+  113k-image dataset (`mediaanalysisd`/`spotlightknowledged` at
+  80-97% CPU) — fixed with a `data/coco/.metadata_never_index` marker
+  file (standard macOS mechanism to exclude a directory from Spotlight,
+  no `sudo` needed) — and, separately, general system memory pressure
+  from having many other applications open at once, which showed up as
+  `vm.swapusage` near its ceiling and a training process burning far
+  less CPU time than wall-clock time elapsed (i.e. mostly blocked
+  waiting on swapped-out memory, not actually computing). Closing
+  memory-heavy applications (browsers, IDEs, VM/container backends)
+  resolved it; this is a real constraint of running multi-hour training
+  on a machine you're also using for other work, not a bug in the
+  script.
 
 ### A note on where the COCO run actually executes
 
@@ -271,6 +319,10 @@ region the model attended to while generating that specific word._
 
 Honest next steps, not yet implemented:
 
+- **Fine-tune the CLIP encoder** instead of keeping it frozen (see
+  Design decisions) — the natural next experiment in the same spirit
+  as the ResNet→CLIP swap: is the *frozen* CLIP encoder now the
+  bottleneck, the way frozen ResNet was before it?
 - **Transformer decoder variant**, benchmarked against the current LSTM
   decoder on the same data/metrics as a case study in trade-offs
 - **Visual question answering** is explicitly out of scope for this
@@ -357,7 +409,7 @@ image-caption-generator/
 │   │   ├── vocabulary.py      # Vocabulary class, tokenization
 │   │   └── dataset.py          # ImageCaptionDataset + collate_fn
 │   ├── models/
-│   │   ├── encoder.py           # ResNet-50/101/152 feature extractor
+│   │   ├── encoder.py           # EncoderCNN (ResNet-50/101/152) + EncoderCLIP (CLIP ViT-B/32)
 │   │   ├── attention.py         # Bahdanau attention
 │   │   ├── decoder.py            # LSTM decoder with attention
 │   │   └── caption_model.py     # composed model + greedy/beam inference
@@ -369,6 +421,8 @@ image-caption-generator/
 │   ├── train_colab.ipynb        # Flickr8k baseline training notebook (Colab)
 │   ├── train_colab_coco.ipynb   # larger, more diverse COCO training notebook (Colab)
 │   └── train_kaggle_coco.ipynb  # same COCO training, adapted for Kaggle's longer/more predictable sessions
+├── scripts/
+│   └── train_local_coco.py    # COCO training on local CUDA/MPS hardware, --encoder resnet50|clip-vit-base-patch32
 ├── .github/workflows/ci.yml  # runs pytest on every push
 ├── app.py                    # Streamlit demo (imports the installed package)
 ├── SETUP_DATA.md

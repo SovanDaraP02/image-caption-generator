@@ -27,17 +27,15 @@ import torch.nn as nn
 from datasets import load_dataset
 from torch.utils.data import DataLoader
 
-from caption_generator.data.dataset import ImageCaptionDataset, collate_fn
+from caption_generator.data.dataset import CLIP_MEAN, CLIP_STD, IMAGENET_MEAN, IMAGENET_STD, ImageCaptionDataset, collate_fn
 from caption_generator.data.vocabulary import Vocabulary
 from caption_generator.models.decoder import DecoderWithAttention
-from caption_generator.models.encoder import EncoderCNN
+from caption_generator.models.encoder import EncoderCLIP, EncoderCNN
 from caption_generator.train import train_one_epoch, validate
 
 DATA_DIR = "data/coco"
 IMAGE_DIR = os.path.join(DATA_DIR, "Images")
 PAIRS_CACHE = os.path.join(DATA_DIR, "pairs_cache.json")
-LATEST_PATH = os.path.join(DATA_DIR, "latest_checkpoint_coco.pth")
-BEST_PATH = "best_checkpoint_coco.pth"
 
 
 def get_device() -> torch.device:
@@ -140,11 +138,22 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--early-stop-patience", type=int, default=3)
     parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--encoder", choices=["resnet50", "clip-vit-base-patch32"], default="resnet50",
+                         help="resnet50: ImageNet-classification features (original). "
+                              "clip-vit-base-patch32: CLIP's contrastively-pretrained, "
+                              "language-aligned features -- see EncoderCLIP's docstring.")
     args = parser.parse_args()
+
+    # Suffix checkpoint paths by encoder so a CLIP run can't clobber an
+    # existing ResNet run's checkpoint (or vice versa) -- they're different
+    # models, meant to be compared, not overwritten.
+    suffix = "" if args.encoder == "resnet50" else "_clip"
+    latest_path = os.path.join(DATA_DIR, f"latest_checkpoint_coco{suffix}.pth")
+    best_path = f"best_checkpoint_coco{suffix}.pth"
 
     os.makedirs(DATA_DIR, exist_ok=True)
     device = get_device()
-    print(f"Using device: {device}")
+    print(f"Using device: {device}, encoder: {args.encoder}")
 
     data = build_pairs(args.n_train, args.n_val, args.n_test)
     train_pairs = [tuple(p) for p in data["train"]]
@@ -157,8 +166,12 @@ def main() -> None:
     pad_idx = vocab.word2idx[vocab.PAD_TOKEN]
     print(f"Vocab size: {len(vocab)}")
 
-    train_dataset = ImageCaptionDataset(IMAGE_DIR, train_pairs, vocab, split="train")
-    val_dataset = ImageCaptionDataset(IMAGE_DIR, val_pairs, vocab, split="val")
+    if args.encoder == "clip-vit-base-patch32":
+        mean, std = CLIP_MEAN, CLIP_STD
+    else:
+        mean, std = IMAGENET_MEAN, IMAGENET_STD
+    train_dataset = ImageCaptionDataset(IMAGE_DIR, train_pairs, vocab, split="train", mean=mean, std=std)
+    val_dataset = ImageCaptionDataset(IMAGE_DIR, val_pairs, vocab, split="val", mean=mean, std=std)
 
     # num_workers=0: Python 3.14 switched multiprocessing's default start
     # method away from fork on this platform, which can't pickle the
@@ -169,8 +182,12 @@ def main() -> None:
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False,
                              collate_fn=lambda b: collate_fn(b, pad_idx), num_workers=0)
 
-    encoder = EncoderCNN(fine_tune=False).to(device)
-    decoder = DecoderWithAttention(vocab_size=len(vocab)).to(device)
+    if args.encoder == "clip-vit-base-patch32":
+        encoder = EncoderCLIP(fine_tune=False).to(device)
+        decoder = DecoderWithAttention(vocab_size=len(vocab), encoder_dim=EncoderCLIP.OUTPUT_DIM).to(device)
+    else:
+        encoder = EncoderCNN(fine_tune=False).to(device)
+        decoder = DecoderWithAttention(vocab_size=len(vocab)).to(device)
 
     criterion = nn.CrossEntropyLoss(ignore_index=pad_idx)
     optimizer = torch.optim.Adam(decoder.parameters(), lr=4e-4)
@@ -180,20 +197,26 @@ def main() -> None:
     epochs_without_improvement = 0
     start_epoch = 1
 
-    if os.path.exists(LATEST_PATH):
-        ckpt = torch.load(LATEST_PATH, map_location=device)
+    if os.path.exists(latest_path):
+        ckpt = torch.load(latest_path, map_location=device)
         checkpoint_vocab_size = len(ckpt["vocab_word2idx"])
+        checkpoint_encoder = ckpt.get("encoder_type", "resnet50")
+        # Vocab is derived from this run's specific training corpus (--n-train
+        # etc.), and encoder_dim depends on which encoder produced the
+        # checkpoint -- either mismatch means incompatible layer shapes, so
+        # resuming would corrupt training rather than continue it. Safer to
+        # start fresh and warn loudly than to silently resume broken or crash
+        # mid-run.
         if checkpoint_vocab_size != len(vocab):
-            # Vocab is derived from this run's specific training corpus (--n-train
-            # etc.), so a checkpoint from a different-sized run has incompatible
-            # embedding/output layer shapes -- resuming would corrupt training
-            # rather than continue it. Safer to start fresh and warn loudly than
-            # to silently resume with a mismatched vocab or crash mid-run.
-            print(f"WARNING: found {LATEST_PATH}, but its vocab size ({checkpoint_vocab_size}) doesn't "
+            print(f"WARNING: found {latest_path}, but its vocab size ({checkpoint_vocab_size}) doesn't "
                   f"match this run's vocab ({len(vocab)}) -- it's from a different-sized run. "
                   "Starting fresh instead of resuming. Move or delete that file to silence this warning.")
+        elif checkpoint_encoder != args.encoder:
+            print(f"WARNING: found {latest_path}, but it was trained with encoder '{checkpoint_encoder}', "
+                  f"not this run's '{args.encoder}'. Starting fresh instead of resuming. "
+                  "Move or delete that file to silence this warning.")
         else:
-            print(f"Found a previous run's checkpoint at {LATEST_PATH} -- resuming instead of starting over.")
+            print(f"Found a previous run's checkpoint at {latest_path} -- resuming instead of starting over.")
             encoder.load_state_dict(ckpt["encoder_state"])
             decoder.load_state_dict(ckpt["decoder_state"])
             optimizer.load_state_dict(ckpt["optimizer_state"])
@@ -235,7 +258,8 @@ def main() -> None:
             "epoch": epoch,
             "best_val_loss": best_val_loss,
             "epochs_without_improvement": epochs_without_improvement,
-        }, LATEST_PATH)
+            "encoder_type": args.encoder,
+        }, latest_path)
 
         if improved:
             torch.save({
@@ -243,8 +267,9 @@ def main() -> None:
                 "decoder_state": decoder.state_dict(),
                 "vocab_word2idx": vocab.word2idx,
                 "vocab_idx2word": vocab.idx2word,
-            }, BEST_PATH)
-            print(f"  -> saved new best checkpoint to {BEST_PATH} (val_loss={val_loss:.4f})")
+                "encoder_type": args.encoder,
+            }, best_path)
+            print(f"  -> saved new best checkpoint to {best_path} (val_loss={val_loss:.4f})")
 
         if epochs_without_improvement >= args.early_stop_patience:
             print(f"No val_loss improvement for {args.early_stop_patience} epochs -- stopping early.")
@@ -260,7 +285,7 @@ def main() -> None:
     # indefinitely on failure (see README's Engineering notes / evaluate.py).
     # BLEU and CIDEr don't share that dependency.
     from caption_generator.evaluate import evaluate
-    scores = evaluate(BEST_PATH, dict(test_pairs_by_image), IMAGE_DIR, device=device, skip_meteor=True)
+    scores = evaluate(best_path, dict(test_pairs_by_image), IMAGE_DIR, device=device, skip_meteor=True)
     for metric, value in scores.items():
         print(f"{metric}: {value:.4f}")
 

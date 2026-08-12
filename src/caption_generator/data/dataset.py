@@ -24,15 +24,25 @@ from caption_generator.data.vocabulary import Vocabulary
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 
+# CLIP was trained with its own normalization stats, not ImageNet's --
+# using the wrong ones silently shifts every input away from what the
+# pretrained CLIP weights expect, degrading features without erroring.
+CLIP_MEAN = [0.48145466, 0.4578275, 0.40821073]
+CLIP_STD = [0.26862954, 0.26130258, 0.27577711]
+
 
 class ImageCaptionDataset(Dataset):
     def __init__(self, image_dir: str, image_caption_pairs: list[tuple[str, str]],
-                 vocab: Vocabulary, split: str = "train"):
+                 vocab: Vocabulary, split: str = "train",
+                 mean: list[float] = IMAGENET_MEAN, std: list[float] = IMAGENET_STD):
         """
         image_dir: path to the Images/ folder
         image_caption_pairs: list of (image_filename, raw_caption_string)
         vocab: a built Vocabulary instance
         split: "train" (with augmentation) or "val"/"test" (no augmentation)
+        mean/std: normalization stats matching the encoder backbone --
+                  IMAGENET_MEAN/STD for EncoderCNN, CLIP_MEAN/STD for
+                  EncoderCLIP (see models/encoder.py).
         """
         self.image_dir = image_dir
         self.pairs = image_caption_pairs
@@ -44,14 +54,14 @@ class ImageCaptionDataset(Dataset):
                 T.RandomCrop(224),
                 T.RandomHorizontalFlip(),
                 T.ToTensor(),
-                T.Normalize(IMAGENET_MEAN, IMAGENET_STD),
+                T.Normalize(mean, std),
             ])
         else:
             self.transform = T.Compose([
                 T.Resize((256, 256)),
                 T.CenterCrop(224),
                 T.ToTensor(),
-                T.Normalize(IMAGENET_MEAN, IMAGENET_STD),
+                T.Normalize(mean, std),
             ])
 
     def __len__(self) -> int:

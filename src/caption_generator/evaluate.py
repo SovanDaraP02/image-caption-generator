@@ -14,10 +14,11 @@ Install first:  pip install pycocoevalcap
 
 import torch
 
+from caption_generator.data.dataset import CLIP_MEAN, CLIP_STD, IMAGENET_MEAN, IMAGENET_STD
 from caption_generator.data.vocabulary import Vocabulary
 from caption_generator.models.caption_model import CaptionModel
 from caption_generator.models.decoder import DecoderWithAttention
-from caption_generator.models.encoder import EncoderCNN
+from caption_generator.models.encoder import EncoderCLIP, EncoderCNN
 
 
 def evaluate(checkpoint_path: str, test_pairs_by_image: dict[str, list[str]],
@@ -40,9 +41,18 @@ def evaluate(checkpoint_path: str, test_pairs_by_image: dict[str, list[str]],
     vocab.word2idx = checkpoint["vocab_word2idx"]
     vocab.idx2word = checkpoint["vocab_idx2word"]
 
-    encoder = EncoderCNN(fine_tune=False)
+    # encoder_type is absent on checkpoints saved before EncoderCLIP existed
+    # -- default to "resnet50" so those old checkpoints still evaluate.
+    encoder_type = checkpoint.get("encoder_type", "resnet50")
+    if encoder_type == "clip-vit-base-patch32":
+        encoder = EncoderCLIP(fine_tune=False)
+        decoder = DecoderWithAttention(vocab_size=len(vocab), encoder_dim=EncoderCLIP.OUTPUT_DIM)
+        mean, std = CLIP_MEAN, CLIP_STD
+    else:
+        encoder = EncoderCNN(fine_tune=False)
+        decoder = DecoderWithAttention(vocab_size=len(vocab))
+        mean, std = IMAGENET_MEAN, IMAGENET_STD
     encoder.load_state_dict(checkpoint["encoder_state"])
-    decoder = DecoderWithAttention(vocab_size=len(vocab))
     decoder.load_state_dict(checkpoint["decoder_state"])
 
     model = CaptionModel(encoder, decoder, vocab, device=device)
@@ -52,7 +62,7 @@ def evaluate(checkpoint_path: str, test_pairs_by_image: dict[str, list[str]],
     transform = T.Compose([
         T.Resize((224, 224)),
         T.ToTensor(),
-        T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+        T.Normalize(mean, std),
     ])
 
     gts, res = {}, {}  # ground truths / results, keyed by image id, pycocoevalcap format

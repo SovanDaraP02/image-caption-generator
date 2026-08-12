@@ -22,43 +22,62 @@ from transformers import (
     BlipProcessor,
 )
 
+from caption_generator.data.dataset import CLIP_MEAN, CLIP_STD, IMAGENET_MEAN, IMAGENET_STD
 from caption_generator.data.vocabulary import Vocabulary
 from caption_generator.models.caption_model import CaptionModel
 from caption_generator.models.decoder import DecoderWithAttention
-from caption_generator.models.encoder import EncoderCNN
+from caption_generator.models.encoder import EncoderCLIP, EncoderCNN
 
 BLIP_CHECKPOINT = "Salesforce/blip-image-captioning-large"
 BLIP2_CHECKPOINT = "Salesforce/blip2-opt-2.7b"
 CLAUDE_MODEL = "claude-sonnet-5"
 DETAILED_DESCRIPTION_PROMPT = (
     "Describe this image in one plain, natural paragraph, like you're telling a "
-    "friend what's in the photo. Mention the people, objects, and setting you "
-    "actually see, roughly where they are in the frame, and any colors or "
-    "materials that stand out -- but only if they'd naturally come up, not as a "
-    "checklist. Write in plain, ordinary language.\n\n"
+    "friend what's in the photo. Write in plain, ordinary language.\n\n"
+    "What to prioritize, in order, and only for what's actually present: "
+    "people first (name how many, and if it reads as a group, their apparent "
+    "relationship or activity) -- then animals -- then other notable objects -- "
+    "then the setting/background. Skip any category that isn't in the photo "
+    "rather than forcing it in. If people's faces or body language clearly show "
+    "an emotion or mood (happy, tense, focused, tired, celebrating, etc.), "
+    "mention it naturally, as part of the sentence, only when it's actually "
+    "visible -- don't guess at feelings you can't see. Mention roughly where "
+    "things are in the frame, and colors or materials that stand out, but only "
+    "if they'd naturally come up, not as a checklist.\n\n"
+    "Match the length to what's actually in the photo -- a simple or empty "
+    "scene gets a short description, a busy scene with several people or "
+    "animals gets a longer one. Don't pad a simple photo with invented detail "
+    "to sound thorough.\n\n"
     "Avoid AI-sounding filler: don't open with 'This image shows/features/"
     "captures', don't use words like 'vibrant', 'nestled', 'boasts', 'a testament "
     "to', or end with a summarizing 'overall' sentence. Just describe what's "
     "there, the way a person would.\n\n"
     "Only state what is actually visible -- do not guess at things you can't see, "
-    "and do not invent people or objects that aren't present."
+    "and do not invent people, animals, or objects that aren't present."
 )
 
 
 @st.cache_resource
-def load_model(checkpoint_path: str = "best_checkpoint.pth") -> CaptionModel:
+def load_model(checkpoint_path: str = "best_checkpoint.pth") -> tuple[CaptionModel, str]:
     checkpoint = torch.load(checkpoint_path, map_location="cpu")
 
     vocab = Vocabulary()
     vocab.word2idx = checkpoint["vocab_word2idx"]
     vocab.idx2word = checkpoint["vocab_idx2word"]
 
-    encoder = EncoderCNN(fine_tune=False)
+    # encoder_type is absent on checkpoints saved before EncoderCLIP existed
+    # -- default to "resnet50" so those older checkpoints still load.
+    encoder_type = checkpoint.get("encoder_type", "resnet50")
+    if encoder_type == "clip-vit-base-patch32":
+        encoder = EncoderCLIP(fine_tune=False)
+        decoder = DecoderWithAttention(vocab_size=len(vocab), encoder_dim=EncoderCLIP.OUTPUT_DIM)
+    else:
+        encoder = EncoderCNN(fine_tune=False)
+        decoder = DecoderWithAttention(vocab_size=len(vocab))
     encoder.load_state_dict(checkpoint["encoder_state"])
-    decoder = DecoderWithAttention(vocab_size=len(vocab))
     decoder.load_state_dict(checkpoint["decoder_state"])
 
-    return CaptionModel(encoder, decoder, vocab, device="cpu")
+    return CaptionModel(encoder, decoder, vocab, device="cpu"), encoder_type
 
 
 @st.cache_resource
@@ -117,17 +136,19 @@ def caption_image_blip2(processor: Blip2Processor, model: Blip2ForConditionalGen
     return processor.decode(output_ids[0], skip_special_tokens=True).strip()
 
 
-def preprocess(image: Image.Image) -> torch.Tensor:
+def preprocess(image: Image.Image, encoder_type: str = "resnet50") -> torch.Tensor:
+    mean, std = (CLIP_MEAN, CLIP_STD) if encoder_type == "clip-vit-base-patch32" else (IMAGENET_MEAN, IMAGENET_STD)
     transform = T.Compose([
         T.Resize((224, 224)),
         T.ToTensor(),
-        T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+        T.Normalize(mean, std),
     ])
     return transform(image.convert("RGB")).unsqueeze(0)
 
 
-def caption_image(model: CaptionModel, image: Image.Image, decoding_mode: str) -> str:
-    image_tensor = preprocess(image)
+def caption_image(model: CaptionModel, image: Image.Image, decoding_mode: str,
+                   encoder_type: str = "resnet50") -> str:
+    image_tensor = preprocess(image, encoder_type)
     if decoding_mode == "Greedy":
         caption, _ = model.generate_greedy(image_tensor)
         return caption
@@ -174,12 +195,14 @@ else:
 backend = st.radio("Captioning model", available_backends)
 
 if backend == BACKEND_CUSTOM:
-    st.caption("**This is the model this project is about**: a ResNet encoder + Bahdanau attention + LSTM "
-               "decoder, designed, trained, and evaluated from scratch by me (see README for architecture, "
-               "training results, and honestly-documented limitations, e.g. hallucination on out-of-distribution "
-               "scenes). Trained on the full 113k-image COCO split (BLEU-4 0.2215, CIDEr 0.6781 on held-out "
-               "test data — see README Results). Shorter, more generic captions than the options below — that's "
-               "a real, expected consequence of training on ~100k images instead of hundreds of millions.")
+    st.caption("**This is the model this project is about**: a CLIP ViT-B/32 encoder (swapped in from an "
+               "ImageNet-pretrained ResNet -- see README for why) + Bahdanau attention + LSTM decoder, designed, "
+               "trained, and evaluated from scratch by me (see README for architecture, training results, and "
+               "honestly-documented limitations, e.g. hallucination on out-of-distribution scenes). Trained on "
+               "the full 113k-image COCO split (BLEU-4 0.2490, CIDEr 0.7729 on held-out test data, +12% BLEU-4 "
+               "over the same data with the original ResNet encoder — see README Results). Shorter, more generic "
+               "captions than the options below — that's a real, expected consequence of training on ~100k "
+               "images instead of hundreds of millions.")
 elif backend == BACKEND_BLIP:
     st.caption("Not trained by me — Salesforce's pretrained BLIP (~470M params), shown for comparison and "
                "practical use. Short but accurate one-line captions, fast even on CPU, free.")
@@ -196,6 +219,7 @@ else:
 
 model_loaded = True
 model = None
+model_encoder_type = "resnet50"
 blip_processor = blip_model = None
 blip2_processor = blip2_model = blip2_device = None
 claude_client = None
@@ -219,7 +243,7 @@ elif backend == BACKEND_BLIP2:
         blip2_processor, blip2_model, blip2_device = load_blip2()
 else:
     try:
-        model = load_model()
+        model, model_encoder_type = load_model()
     except FileNotFoundError:
         model_loaded = False
         st.warning("No trained checkpoint found yet (best_checkpoint.pth). "
@@ -249,6 +273,6 @@ if uploaded_files and model_loaded:
                 elif backend == BACKEND_BLIP2:
                     caption = caption_image_blip2(blip2_processor, blip2_model, blip2_device, image)
                 else:
-                    caption = caption_image(model, image, decoding_mode)
+                    caption = caption_image(model, image, decoding_mode, model_encoder_type)
             st.success(f"**Caption:** {caption}")
         st.divider()

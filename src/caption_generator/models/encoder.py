@@ -78,3 +78,69 @@ class EncoderCNN(nn.Module):
             for layer in list(self.resnet.children())[7:]:
                 for param in layer.parameters():
                     param.requires_grad = True
+
+
+class EncoderCLIP(nn.Module):
+    """Wraps a pretrained CLIP vision tower instead of an ImageNet-classifier
+    backbone.
+
+    Why this instead of another EncoderCNN backbone: ResNet's ImageNet
+    pretraining objective is 1000-way object classification, which has no
+    linguistic structure to it at all -- "this is a golden retriever" and
+    "this is a beagle" are just two different output classes, equally
+    unrelated to every other class. CLIP is pretrained contrastively to
+    align images with their natural-language captions directly, so its
+    features already encode the kind of visual-semantic structure a
+    captioning decoder needs, instead of the decoder having to learn that
+    structure from scratch on top of classification features that were
+    never built for it. This is the encoder-side counterpart to the
+    dataset-scale finding in README.md (6k->50k->113k images): more caption
+    data stopped helping much once the frozen ResNet features became the
+    bottleneck instead of the data.
+
+    Uses openai/clip-vit-base-patch32: a 224x224 image split into 32x32
+    patches gives exactly (224/32)^2 = 49 patch tokens, matching
+    EncoderCNN's 49-region grid with no interpolation needed -- so this is
+    shape-compatible everywhere EncoderCNN is used, as long as the caller
+    also passes the right encoder_dim (768, not EncoderCNN's 2048) to
+    DecoderWithAttention/Attention, and normalizes inputs with CLIP_MEAN/
+    CLIP_STD (see data/dataset.py) rather than ImageNet stats.
+    """
+
+    OUTPUT_DIM = 768
+    CHECKPOINT = "openai/clip-vit-base-patch32"
+
+    def __init__(self, fine_tune: bool = False, pretrained: bool = True):
+        super().__init__()
+        from transformers import CLIPVisionConfig, CLIPVisionModel
+
+        if pretrained:
+            try:
+                self.clip = CLIPVisionModel.from_pretrained(self.CHECKPOINT)
+            except Exception as e:
+                print(f"[EncoderCLIP] Could not download pretrained weights ({e}). "
+                      f"Falling back to random init -- fine for shape tests, "
+                      f"NOT fine for real training.")
+                self.clip = CLIPVisionModel(CLIPVisionConfig(image_size=224, patch_size=32))
+        else:
+            self.clip = CLIPVisionModel(CLIPVisionConfig(image_size=224, patch_size=32))
+
+        self.fine_tune(fine_tune)
+
+    def forward(self, images: torch.Tensor) -> torch.Tensor:
+        """
+        images: (B, 3, 224, 224), normalized with CLIP_MEAN/CLIP_STD
+        returns: (B, 49, 768) -- 49 spatial patches, each 768-dim
+        """
+        out = self.clip(pixel_values=images).last_hidden_state  # (B, 50, 768): CLS + 49 patches
+        return out[:, 1:, :]  # drop the CLS token -> (B, 49, 768)
+
+    def fine_tune(self, fine_tune: bool = False) -> None:
+        """Freeze everything by default. If fine-tuning, unfreeze only the
+        last transformer block -- same rationale as EncoderCNN.fine_tune."""
+        for param in self.clip.parameters():
+            param.requires_grad = False
+        if fine_tune:
+            for layer in self.clip.encoder.layers[-1:]:
+                for param in layer.parameters():
+                    param.requires_grad = True
