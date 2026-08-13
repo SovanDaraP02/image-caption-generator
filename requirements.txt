@@ -1,8 +1,15 @@
 # Mirrors [project.dependencies] in pyproject.toml. This file exists only
-# because Hugging Face Spaces' Streamlit SDK auto-installs from
-# requirements.txt and does not read pyproject.toml -- see DEPLOY_SPACES.md.
+# because Hugging Face Spaces' Streamlit SDK and Streamlit Community Cloud
+# both auto-install from requirements.txt and do not read pyproject.toml --
+# see DEPLOY_SPACES.md / DEPLOY_STREAMLIT.md.
 # For local dev / CI, use `pip install -e ".[dev]"` instead; keep this in
 # sync if you change pyproject.toml dependencies.
+#
+# -e . installs this project's own src/caption_generator package (editable
+# mode) -- without it, `from caption_generator...` in app.py fails with
+# ModuleNotFoundError on a fresh cloud deploy, since neither platform runs
+# `pip install -e .` on its own the way local setup does.
+-e .
 torch>=2.2
 torchvision>=0.17
 pandas
