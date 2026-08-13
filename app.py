@@ -1,9 +1,13 @@
 """Streamlit demo app. Run locally with:
     streamlit run app.py
 
-Deploy on Hugging Face Spaces (see DEPLOY_SPACES.md) once you have
-best_checkpoint.pth -- a live link is what you hand a reviewer so they
-can try their own image, not just read the code.
+Deploy on Streamlit Community Cloud (see DEPLOY_STREAMLIT.md) or
+Hugging Face Spaces (see DEPLOY_SPACES.md) -- a live link is what you
+hand a reviewer so they can try their own image, not just read the
+code. best_checkpoint.pth is git-ignored (large, regenerable); if it's
+not present locally, load_model() below downloads it automatically
+from CHECKPOINT_DOWNLOAD_URL, so a fresh clone/deploy doesn't need it
+copied in by hand.
 """
 
 import base64
@@ -11,6 +15,7 @@ import io
 import os
 
 import anthropic
+import requests
 import streamlit as st
 import torch
 import torchvision.transforms as T
@@ -31,6 +36,10 @@ from caption_generator.models.encoder import EncoderCLIP, EncoderCNN
 BLIP_CHECKPOINT = "Salesforce/blip-image-captioning-large"
 BLIP2_CHECKPOINT = "Salesforce/blip2-opt-2.7b"
 CLAUDE_MODEL = "claude-sonnet-5"
+CHECKPOINT_DOWNLOAD_URL = (
+    "https://huggingface.co/sovandara6262/image-caption-generator-checkpoint/"
+    "resolve/main/best_checkpoint.pth"
+)
 DETAILED_DESCRIPTION_PROMPT = (
     "Describe this image in one plain, natural paragraph, like you're telling a "
     "friend what's in the photo. Write in plain, ordinary language.\n\n"
@@ -57,8 +66,22 @@ DETAILED_DESCRIPTION_PROMPT = (
 )
 
 
+def download_checkpoint_if_missing(checkpoint_path: str) -> None:
+    if os.path.exists(checkpoint_path):
+        return
+    with st.spinner(f"Downloading trained checkpoint (~400MB, first run only)..."):
+        response = requests.get(CHECKPOINT_DOWNLOAD_URL, stream=True, timeout=60)
+        response.raise_for_status()
+        tmp_path = checkpoint_path + ".part"
+        with open(tmp_path, "wb") as f:
+            for chunk in response.iter_content(chunk_size=8 * 1024 * 1024):
+                f.write(chunk)
+        os.rename(tmp_path, checkpoint_path)  # atomic: no other process sees a half-written file
+
+
 @st.cache_resource
 def load_model(checkpoint_path: str = "best_checkpoint.pth") -> tuple[CaptionModel, str]:
+    download_checkpoint_if_missing(checkpoint_path)
     checkpoint = torch.load(checkpoint_path, map_location="cpu")
 
     vocab = Vocabulary()
@@ -244,11 +267,15 @@ elif backend == BACKEND_BLIP2:
 else:
     try:
         model, model_encoder_type = load_model()
+    except requests.exceptions.RequestException as e:
+        model_loaded = False
+        st.warning(f"Couldn't download the trained checkpoint ({e}). "
+                   "Check your internet connection and reload the page.")
     except FileNotFoundError:
         model_loaded = False
-        st.warning("No trained checkpoint found yet (best_checkpoint.pth). "
-                   "Train the model first (see notebooks/train_colab.ipynb), then "
-                   "place the checkpoint in this folder.")
+        st.warning("No trained checkpoint found yet (best_checkpoint.pth), and the automatic "
+                   "download failed. Train the model first (see notebooks/train_colab.ipynb), "
+                   "then place the checkpoint in this folder.")
 
 uploaded_files = st.file_uploader(
     "Upload one or more images", type=["jpg", "jpeg", "png"],

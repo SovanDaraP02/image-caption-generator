@@ -2,7 +2,17 @@
 
 `app.py` is already a working Streamlit app — this just puts it on a public
 URL you can hand to anyone (a reviewer, a recruiter, Mr. Khim) without them
-installing anything. Free tier, no credit card.
+installing anything.
+
+**Note:** as of writing, Hugging Face requires a payment method on file
+(even for the free `cpu-basic` tier) before a *new* account can create a
+live-compute Space (Streamlit/Gradio/Docker) — confirmed via
+`whoami()`'s `canPay`/`isPro` fields returning a 402 on `create_repo`
+otherwise. Only fully-static Spaces are exempt, which can't run this
+app. If you don't want to add a card, see
+[`DEPLOY_STREAMLIT.md`](./DEPLOY_STREAMLIT.md) instead — Streamlit
+Community Cloud is free with no payment method required and deploys
+this exact app directly from GitHub.
 
 **Prerequisite:** you need a trained `best_checkpoint.pth` first (run
 `notebooks/train_colab.ipynb` on Colab — see the main README).

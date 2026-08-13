@@ -17,7 +17,8 @@ learning to attend to different spatial regions of the image for each
 generated word.
 
 ## Live demo
-[Link to Hugging Face Spaces deployment — add once deployed, see `DEPLOY_SPACES.md`]
+[Link to Streamlit Community Cloud deployment — add once deployed, see `DEPLOY_STREAMLIT.md`
+(or `DEPLOY_SPACES.md` for Hugging Face Spaces instead)]
 
 The Streamlit app (`app.py`) offers three captioning backends,
 selectable in the UI. **The model this project is actually about is
