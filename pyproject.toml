@@ -24,6 +24,9 @@ dependencies = [
     "transformers>=4.40",
     "anthropic>=0.40",
     "requests",
+    "einops",
+    "einops_exts",
+    "open_clip_torch",
 ]
 
 [project.optional-dependencies]
