@@ -298,17 +298,18 @@ BACKEND_BLIP3 = "BLIP-3 (external pretrained model, experimental, reference only
 BACKEND_CLAUDE = "Claude (external pretrained model, most detailed, reference only)"
 
 # PUBLIC_DEMO=true (set as a Space variable on the deployed public link) hides
-# BLIP-2 and BLIP-3: both are heavy local models that need real
-# RAM/GPU/Apple Silicon to run well, and free-tier CPU-only hosting doesn't
-# have it -- BLIP-3 in particular needs ~18GB just for weights, which
-# reliably crashes the app on Streamlit Community Cloud's free tier
-# (confirmed in practice, not just a theoretical concern). Claude stays
-# public: it's a lightweight API call, no heavy local model to load, and
-# costs the deployer nothing extra since visitors must enter their own
-# API key (no ANTHROPIC_API_KEY secret is set for the public deploy) --
-# see caption_image_claude's api_key handling below.
+# BLIP-3: needs ~18GB just for weights, confirmed to reliably crash the app
+# on Streamlit Community Cloud's free tier (not just a theoretical concern).
+# BLIP-2 is included on a trial basis -- on CPU-only hosting it falls back
+# to float32 (~11GB, smaller than BLIP-3 but still large for a free tier);
+# untested whether it actually fits. If it also crashes the public deploy,
+# move BACKEND_BLIP2 into the `else` branch below alongside BACKEND_BLIP3.
+# Claude stays public regardless: it's a lightweight API call, no heavy
+# local model to load, and costs the deployer nothing extra since visitors
+# must enter their own API key (no ANTHROPIC_API_KEY secret is set for the
+# public deploy) -- see caption_image_claude's api_key handling below.
 if os.environ.get("PUBLIC_DEMO", "false").lower() == "true":
-    available_backends = [BACKEND_CUSTOM, BACKEND_BLIP, BACKEND_CLAUDE]
+    available_backends = [BACKEND_CUSTOM, BACKEND_BLIP, BACKEND_BLIP2, BACKEND_CLAUDE]
 else:
     available_backends = [BACKEND_CUSTOM, BACKEND_BLIP, BACKEND_BLIP2, BACKEND_BLIP3, BACKEND_CLAUDE]
 
