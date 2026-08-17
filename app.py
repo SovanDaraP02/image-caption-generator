@@ -317,13 +317,13 @@ backend = st.radio("Captioning model", available_backends)
 
 if backend == BACKEND_CUSTOM:
     st.caption("**This is the model this project is about**: a CLIP ViT-B/32 encoder (swapped in from an "
-               "ImageNet-pretrained ResNet -- see README for why) + Bahdanau attention + LSTM decoder, designed, "
-               "trained, and evaluated from scratch by me (see README for architecture, training results, and "
-               "honestly-documented limitations, e.g. hallucination on out-of-distribution scenes). Trained on "
-               "the full 113k-image COCO split (BLEU-4 0.2490, CIDEr 0.7729 on held-out test data, +12% BLEU-4 "
-               "over the same data with the original ResNet encoder — see README Results). Shorter, more generic "
-               "captions than the options below — that's a real, expected consequence of training on ~100k "
-               "images instead of hundreds of millions.")
+               "ImageNet-pretrained ResNet, then fine-tuned -- see README for why) + Bahdanau attention + LSTM "
+               "decoder, designed, trained, and evaluated from scratch by me (see README for architecture, "
+               "training results, and honestly-documented limitations, e.g. hallucination on out-of-distribution "
+               "scenes). Trained on the full 113k-image COCO split (BLEU-4 0.2601, CIDEr 0.8083 on held-out test "
+               "data — +12% BLEU-4 from swapping ResNet for CLIP, another +4.5% from fine-tuning CLIP's last "
+               "block — see README Results). Shorter, more generic captions than the options below — that's a "
+               "real, expected consequence of training on ~100k images instead of hundreds of millions.")
 elif backend == BACKEND_BLIP:
     st.caption("Not trained by me — Salesforce's pretrained BLIP (~470M params), shown for comparison and "
                "practical use. Short but accurate one-line captions, fast even on CPU, free.")

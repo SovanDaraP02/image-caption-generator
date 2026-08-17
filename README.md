@@ -8,9 +8,10 @@
 A CLIP ViT-B/32 (or ResNet-50/101/152 — swappable, see Design decisions)
 encoder + Bahdanau attention + LSTM decoder, following *Show, Attend
 and Tell* (Xu et al., 2015), trained on progressively larger/more
-diverse data (Flickr8k → COCO 50k → COCO 113k) and, separately, a
-progressively better-aligned encoder (ResNet → CLIP) — see Results for
-the full experimental progression.
+diverse data (Flickr8k → COCO 50k → COCO 113k), a progressively
+better-aligned encoder (ResNet → CLIP), and finally a fine-tuned
+version of that encoder — see Results for the full experimental
+progression.
 
 Given an image, the model generates a natural-language caption while
 learning to attend to different spatial regions of the image for each
@@ -120,37 +121,41 @@ flowchart LR
 `best_checkpoint.pth` (the checkpoint shipped in this repo and loaded
 by default in `app.py`'s "My trained model" backend) uses a **CLIP
 ViT-B/32 vision encoder**, swapped in from the original ImageNet-
-pretrained ResNet, trained on the full 113,000-image COCO Karpathy
-train split and evaluated on a held-out 5,000-image test split it
-never saw during training:
+pretrained ResNet and then **fine-tuned** (last transformer block
+unfrozen, low learning rate), trained on the full 113,000-image COCO
+Karpathy train split and evaluated on a held-out 5,000-image test
+split it never saw during training:
 
 | Metric | Score |
 |---|---|
-| BLEU-1 | 0.6789 |
-| BLEU-2 | 0.5036 |
-| BLEU-3 | 0.3564 |
-| BLEU-4 | 0.2490 |
-| CIDEr | 0.7729 |
+| BLEU-1 | 0.6879 |
+| BLEU-2 | 0.5136 |
+| BLEU-3 | 0.3671 |
+| BLEU-4 | 0.2601 |
+| CIDEr | 0.8083 |
 
-Trained for 10 epochs (best checkpoint at epoch 9, `val_loss=2.2332`)
-locally on an Apple M4 Pro (MPS) via `scripts/train_local_coco.py
---encoder clip-vit-base-patch32` — see "Three ways to train" below.
+Trained in two phases, both locally on an Apple M4 Pro (MPS): 10
+epochs frozen-encoder (best at epoch 9, `val_loss=2.2332`), then a
+further 6-epoch fine-tuning phase warm-started from that checkpoint
+(best at epoch 5, `val_loss=2.1940`) via
+`scripts/train_local_coco.py --encoder clip-vit-base-patch32
+--finetune-from <checkpoint>` — see "Three ways to train" below.
 METEOR skipped (see Engineering notes).
 
-Four checkpoints total, kept for comparison (`best_checkpoint_flickr8k.pth`,
+Five checkpoints total, kept for comparison (`best_checkpoint_flickr8k.pth`,
 `best_checkpoint_coco_50k.pth`, `best_checkpoint_coco_113k_resnet.pth`,
-and the current CLIP-encoder one):
+`best_checkpoint_coco_clip_frozen.pth`, and the current fine-tuned one):
 
-| Metric | Flickr8k (6k, ResNet) | COCO 50k (ResNet) | COCO 113k (ResNet) | **COCO 113k (CLIP encoder)** |
-|---|---|---|---|---|
-| BLEU-1 | 0.5517 | 0.6363 | 0.6440 | **0.6789** |
-| BLEU-2 | 0.3737 | 0.4600 | 0.4650 | **0.5036** |
-| BLEU-3 | 0.2437 | 0.3188 | 0.3221 | **0.3564** |
-| BLEU-4 | 0.1585 | 0.2195 | 0.2215 | **0.2490** |
-| METEOR | 0.1953 | _skipped_ | _skipped_ | _skipped_ |
-| CIDEr | 0.4521 | 0.6680 | 0.6781 | **0.7729** |
+| Metric | Flickr8k (6k, ResNet) | COCO 50k (ResNet) | COCO 113k (ResNet) | COCO 113k (CLIP, frozen) | **COCO 113k (CLIP, fine-tuned)** |
+|---|---|---|---|---|---|
+| BLEU-1 | 0.5517 | 0.6363 | 0.6440 | 0.6789 | **0.6879** |
+| BLEU-2 | 0.3737 | 0.4600 | 0.4650 | 0.5036 | **0.5136** |
+| BLEU-3 | 0.2437 | 0.3188 | 0.3221 | 0.3564 | **0.3671** |
+| BLEU-4 | 0.1585 | 0.2195 | 0.2215 | 0.2490 | **0.2601** |
+| METEOR | 0.1953 | _skipped_ | _skipped_ | _skipped_ | _skipped_ |
+| CIDEr | 0.4521 | 0.6680 | 0.6781 | 0.7729 | **0.8083** |
 
-Three honest findings from these four runs, not one:
+Four honest findings from these five runs, not one:
 
 - **6k → 50k images (same ResNet encoder): a large, real improvement**
   (+38% BLEU-4, +48% CIDEr). The same encoder/attention/decoder code
@@ -179,15 +184,26 @@ Three honest findings from these four runs, not one:
   Every training epoch scored better with CLIP than the equivalent
   ResNet epoch, not just the final number, and validation loss
   plateaued later in training than the ResNet run did.
+- **Fine-tuning that CLIP encoder's last block: a smaller, real
+  improvement** (+4.5% BLEU-4, +4.6% CIDEr over the frozen-CLIP run).
+  Warm-started from the converged frozen-encoder checkpoint, encoder's
+  last transformer block unfrozen at `1e-5` (decoder continued at
+  `1e-4`, both far below the `4e-4` used for training from scratch) so
+  large early gradients from a comparatively undertrained signal
+  couldn't destroy the pretrained CLIP features. Val loss improved
+  every epoch through epoch 5, then ticked back up slightly at epoch
+  6 — a sign this fine-tuning phase was close to its own point of
+  diminishing returns too, not that it failed.
 
-Together these three findings tell a coherent story: identify a
-plateau, form a specific hypothesis about *why* (data vs. architecture),
-run the controlled comparison, and let the result confirm or reject it.
-The 6k→113k→CLIP progression is still well short of a production-scale
-pretrained model (see `app.py`'s BLIP/BLIP-2/Claude backends above) —
-even 113k images is orders of magnitude below the hundreds of millions
-those are trained on — but it's a genuine, measured improvement at
-every step, not just more training for its own sake.
+Together these four findings tell a coherent story: identify a
+plateau, form a specific hypothesis about *why* (data vs. architecture
+vs. frozen-vs-fine-tuned), run the controlled comparison, and let the
+result confirm or reject it. The 6k→113k→CLIP→fine-tuned progression
+is still well short of a production-scale pretrained model (see
+`app.py`'s BLIP/BLIP-2/BLIP-3/Claude backends above) — even 113k
+images is orders of magnitude below the hundreds of millions those are
+trained on — but it's a genuine, measured improvement at every single
+step, not just more training for its own sake.
 
 ## Three ways to train
 
@@ -213,18 +229,35 @@ a resumable checkpoint after every epoch — safe to interrupt (Ctrl-C,
 sleep, crash, an actual machine reboot) and re-run.
 
 ```bash
-python scripts/train_local_coco.py --encoder clip-vit-base-patch32 --n-train 113000 --n-val 5000 --n-test 5000  # full run (what produced best_checkpoint.pth)
+python scripts/train_local_coco.py --encoder clip-vit-base-patch32 --n-train 113000 --n-val 5000 --n-test 5000  # train from scratch, frozen encoder
 python scripts/train_local_coco.py --n-train 5000                                                                 # smaller/faster run, default ResNet encoder
+
+# fine-tune an already-converged frozen-encoder checkpoint (what produced best_checkpoint.pth):
+python scripts/train_local_coco.py --encoder clip-vit-base-patch32 --n-train 113000 --n-val 5000 --n-test 5000 \
+    --finetune-from best_checkpoint_coco_clip.pth --epochs 6 --lr 1e-4 --encoder-lr 1e-5
 ```
 
 `--encoder` chooses between `resnet50` (default, `EncoderCNN`, ImageNet-
 classification pretraining) and `clip-vit-base-patch32` (`EncoderCLIP`,
 CLIP's contrastive image-text pretraining — see the Results section
 above for why this mattered here). Checkpoint filenames are suffixed
-by encoder (`best_checkpoint_coco_clip.pth` vs `best_checkpoint_coco.pth`)
-so the two can't clobber each other, and each checkpoint records which
-encoder produced it (`encoder_type` key) so `app.py`/`evaluate.py` load
-the right architecture and input normalization automatically.
+by encoder (`best_checkpoint_coco_clip.pth` vs `best_checkpoint_coco.pth`,
+plus `_finetuned` when `--finetune-from` is used) so runs can't clobber
+each other, and each checkpoint records which encoder produced it
+(`encoder_type` key) so `app.py`/`evaluate.py` load the right
+architecture and input normalization automatically.
+
+`--finetune-from <checkpoint>` warm-starts both encoder and decoder from
+an existing checkpoint instead of training from scratch, and unfreezes
+the encoder's last block (`fine_tune=True`) with its own, much lower
+learning rate (`--encoder-lr`, default `1e-5`) than the decoder's
+(`--lr`, default `4e-4` — pass a lower value here too when fine-tuning,
+e.g. `1e-4`, since the decoder is already converged and a fresh-training
+learning rate can overshoot). This is a different thing from the
+automatic interrupted-run resume described below: resume continues the
+*same* run with the *same* hyperparameters; `--finetune-from` starts a
+deliberately different, second training phase on top of a finished run's
+result.
 
 Four things learned running this for real, multi-hour, unattended:
 
@@ -261,6 +294,14 @@ Four things learned running this for real, multi-hour, unattended:
   resolved it; this is a real constraint of running multi-hour training
   on a machine you're also using for other work, not a bug in the
   script.
+- **When fine-tuning, use a much lower learning rate for the
+  newly-unfrozen block than the one used for training from scratch** —
+  the decoder here is already converged, and the encoder's last block
+  has never received a gradient for this task at all; a shared,
+  from-scratch-sized learning rate risks a large early update
+  destroying the pretrained features it's supposed to be refining, not
+  improving on them. `--encoder-lr 1e-5` against a `--lr 1e-4` decoder
+  (both below the `4e-4` used for the from-scratch run) worked here.
 
 ### A note on where the COCO run actually executes
 
@@ -320,10 +361,11 @@ region the model attended to while generating that specific word._
 
 Honest next steps, not yet implemented:
 
-- **Fine-tune the CLIP encoder** instead of keeping it frozen (see
-  Design decisions) — the natural next experiment in the same spirit
-  as the ResNet→CLIP swap: is the *frozen* CLIP encoder now the
-  bottleneck, the way frozen ResNet was before it?
+- **Fine-tune the CLIP encoder further, or unfreeze more of it** — the
+  single-block fine-tune already done (see Results) improved things
+  but showed early signs of its own diminishing returns by epoch 6;
+  unfreezing more blocks, or more epochs at an even lower LR, is the
+  natural next increment if there's more to extract there.
 - **Transformer decoder variant**, benchmarked against the current LSTM
   decoder on the same data/metrics as a case study in trade-offs
 - **Visual question answering** is explicitly out of scope for this

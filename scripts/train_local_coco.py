@@ -142,18 +142,34 @@ def main() -> None:
                          help="resnet50: ImageNet-classification features (original). "
                               "clip-vit-base-patch32: CLIP's contrastively-pretrained, "
                               "language-aligned features -- see EncoderCLIP's docstring.")
+    parser.add_argument("--lr", type=float, default=4e-4, help="decoder learning rate")
+    parser.add_argument("--finetune-from", type=str, default=None,
+                         help="Warm-start encoder+decoder from this checkpoint instead of training "
+                              "from scratch, and unfreeze the encoder's last block "
+                              "(EncoderCLIP/EncoderCNN fine_tune=True) with its own, much lower "
+                              "learning rate (--encoder-lr). For continuing an already-converged "
+                              "frozen-encoder run into a fine-tuning phase, not for resuming an "
+                              "interrupted run of this same script (that's automatic, see latest_path).")
+    parser.add_argument("--encoder-lr", type=float, default=1e-5,
+                         help="learning rate for the newly-unfrozen encoder block when "
+                              "--finetune-from is set -- deliberately much lower than --lr so "
+                              "large early gradients (decoder is far more converged than the "
+                              "encoder is used to seeing) don't destroy the pretrained features.")
     args = parser.parse_args()
 
-    # Suffix checkpoint paths by encoder so a CLIP run can't clobber an
-    # existing ResNet run's checkpoint (or vice versa) -- they're different
-    # models, meant to be compared, not overwritten.
+    # Suffix checkpoint paths by encoder (and fine-tuning phase) so runs
+    # can't clobber each other -- they're different models, meant to be
+    # compared, not overwritten.
     suffix = "" if args.encoder == "resnet50" else "_clip"
+    if args.finetune_from:
+        suffix += "_finetuned"
     latest_path = os.path.join(DATA_DIR, f"latest_checkpoint_coco{suffix}.pth")
     best_path = f"best_checkpoint_coco{suffix}.pth"
 
     os.makedirs(DATA_DIR, exist_ok=True)
     device = get_device()
-    print(f"Using device: {device}, encoder: {args.encoder}")
+    print(f"Using device: {device}, encoder: {args.encoder}"
+          + (f", fine-tuning from: {args.finetune_from}" if args.finetune_from else ""))
 
     data = build_pairs(args.n_train, args.n_val, args.n_test)
     train_pairs = [tuple(p) for p in data["train"]]
@@ -161,8 +177,18 @@ def main() -> None:
     test_pairs = [tuple(p) for p in data["test"]]
     print(f"Pairs -- train: {len(train_pairs)}  val: {len(val_pairs)}  test: {len(test_pairs)}")
 
-    train_captions_raw = [cap for _, cap in train_pairs]
-    vocab = Vocabulary(min_word_freq=5).build(train_captions_raw)
+    vocab = Vocabulary()
+    if args.finetune_from:
+        # Reuse the exact vocab the starting checkpoint's decoder was built
+        # with -- rebuilding from data (even the same data) risks any
+        # nondeterminism producing a subtly different vocab, which would
+        # silently corrupt the loaded embedding/output layer alignment.
+        finetune_ckpt = torch.load(args.finetune_from, map_location=device)
+        vocab.word2idx = finetune_ckpt["vocab_word2idx"]
+        vocab.idx2word = finetune_ckpt["vocab_idx2word"]
+    else:
+        train_captions_raw = [cap for _, cap in train_pairs]
+        vocab = Vocabulary(min_word_freq=5).build(train_captions_raw)
     pad_idx = vocab.word2idx[vocab.PAD_TOKEN]
     print(f"Vocab size: {len(vocab)}")
 
@@ -182,20 +208,47 @@ def main() -> None:
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False,
                              collate_fn=lambda b: collate_fn(b, pad_idx), num_workers=0)
 
+    fine_tune_encoder = bool(args.finetune_from)
     if args.encoder == "clip-vit-base-patch32":
-        encoder = EncoderCLIP(fine_tune=False).to(device)
+        encoder = EncoderCLIP(fine_tune=fine_tune_encoder).to(device)
         decoder = DecoderWithAttention(vocab_size=len(vocab), encoder_dim=EncoderCLIP.OUTPUT_DIM).to(device)
     else:
-        encoder = EncoderCNN(fine_tune=False).to(device)
+        encoder = EncoderCNN(fine_tune=fine_tune_encoder).to(device)
         decoder = DecoderWithAttention(vocab_size=len(vocab)).to(device)
 
     criterion = nn.CrossEntropyLoss(ignore_index=pad_idx)
-    optimizer = torch.optim.Adam(decoder.parameters(), lr=4e-4)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=2)
 
     best_val_loss = float("inf")
     epochs_without_improvement = 0
     start_epoch = 1
+
+    if args.finetune_from:
+        print(f"Warm-starting encoder+decoder from {args.finetune_from}")
+        encoder.load_state_dict(finetune_ckpt["encoder_state"])
+        decoder.load_state_dict(finetune_ckpt["decoder_state"])
+
+        # Differential learning rates: the decoder is already well-converged
+        # on frozen features (--lr, same as initial training), but the
+        # newly-unfrozen encoder block has never been updated by gradient
+        # descent for this task at all -- a shared high LR would blow away
+        # its pretrained weights in a step or two. encoder_params is
+        # whichever ones fine_tune=True actually unfroze (requires_grad=True).
+        encoder_params = [p for p in encoder.parameters() if p.requires_grad]
+        optimizer = torch.optim.Adam([
+            {"params": decoder.parameters(), "lr": args.lr},
+            {"params": encoder_params, "lr": args.encoder_lr},
+        ])
+
+        # Establish this run's real baseline before training -- comparing
+        # against the frozen-encoder starting point, not an arbitrary
+        # infinity, so a checkpoint only gets saved as "best" if fine-tuning
+        # the encoder actually beat where it started.
+        best_val_loss = validate(encoder, decoder, val_loader, criterion, device)
+        print(f"Starting val_loss (frozen-encoder baseline, before fine-tuning): {best_val_loss:.4f}")
+    else:
+        optimizer = torch.optim.Adam(decoder.parameters(), lr=args.lr)
+
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=2)
 
     if os.path.exists(latest_path):
         ckpt = torch.load(latest_path, map_location=device)
