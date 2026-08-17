@@ -298,13 +298,17 @@ BACKEND_BLIP3 = "BLIP-3 (external pretrained model, experimental, reference only
 BACKEND_CLAUDE = "Claude (external pretrained model, most detailed, reference only)"
 
 # PUBLIC_DEMO=true (set as a Space variable on the deployed public link) hides
-# BLIP-2, BLIP-3, and Claude: BLIP-2/BLIP-3 are unusably slow on free-tier
-# CPU-only hosting (no GPU means no fp16 speedup), BLIP-3 additionally needs
-# ~18GB downloaded and loaded (likely to exceed free-tier memory limits
-# entirely), and Claude costs API credits per request from every visitor.
-# All three stay available for local use, where none of that applies.
+# BLIP-2 and BLIP-3: both are heavy local models that need real
+# RAM/GPU/Apple Silicon to run well, and free-tier CPU-only hosting doesn't
+# have it -- BLIP-3 in particular needs ~18GB just for weights, which
+# reliably crashes the app on Streamlit Community Cloud's free tier
+# (confirmed in practice, not just a theoretical concern). Claude stays
+# public: it's a lightweight API call, no heavy local model to load, and
+# costs the deployer nothing extra since visitors must enter their own
+# API key (no ANTHROPIC_API_KEY secret is set for the public deploy) --
+# see caption_image_claude's api_key handling below.
 if os.environ.get("PUBLIC_DEMO", "false").lower() == "true":
-    available_backends = [BACKEND_CUSTOM, BACKEND_BLIP]
+    available_backends = [BACKEND_CUSTOM, BACKEND_BLIP, BACKEND_CLAUDE]
 else:
     available_backends = [BACKEND_CUSTOM, BACKEND_BLIP, BACKEND_BLIP2, BACKEND_BLIP3, BACKEND_CLAUDE]
 
