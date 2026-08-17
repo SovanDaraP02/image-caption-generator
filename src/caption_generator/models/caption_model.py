@@ -59,6 +59,7 @@ class CaptionModel:
         word = torch.tensor([self.vocab.word2idx[self.vocab.START_TOKEN]], device=self.device)
         generated_ids: list[int] = []
         alphas = []
+        unk_id = self.vocab.word2idx[self.vocab.UNK_TOKEN]
 
         for _ in range(self.max_len):
             embedding = self.decoder.embedding(word)  # (1, embed_dim)
@@ -67,11 +68,16 @@ class CaptionModel:
             h, c = self.decoder.lstm_cell(lstm_input, (h, c))
             logits = self.decoder.fc(h)  # (1, vocab_size)
 
-            # walk candidates best-to-worst, skip any that would create a
-            # repeated n-gram, fall back to the top pick if all are blocked
+            # walk candidates best-to-worst, skip <unk> (never a real word to
+            # say -- forces the model to commit to its next-best actual
+            # vocabulary word) and anything that would create a repeated
+            # n-gram; fall back to the top non-<unk> pick if every candidate
+            # would repeat an n-gram (never falls back to <unk> itself)
             ranked_ids = logits.squeeze(0).argsort(descending=True).tolist()
-            token_id = ranked_ids[0]
+            token_id = next((i for i in ranked_ids if i != unk_id), ranked_ids[0])
             for candidate_id in ranked_ids:
+                if candidate_id == unk_id:
+                    continue
                 if not _would_repeat_ngram(generated_ids, candidate_id, no_repeat_ngram_size):
                     token_id = candidate_id
                     break
@@ -97,6 +103,7 @@ class CaptionModel:
 
         start_id = self.vocab.word2idx[self.vocab.START_TOKEN]
         end_id = self.vocab.word2idx[self.vocab.END_TOKEN]
+        unk_id = self.vocab.word2idx[self.vocab.UNK_TOKEN]
 
         # each beam: (token_id_sequence, log_prob, h, c)
         beams = [([start_id], 0.0, h0, c0)]
@@ -118,10 +125,12 @@ class CaptionModel:
                 log_probs = F.log_softmax(logits, dim=1).squeeze(0)  # (vocab_size,)
 
                 # over-fetch so there's still `beam_width` options left
-                # after any get filtered out by the n-gram check
+                # after any get filtered out by the <unk>/n-gram checks
                 top_log_probs, top_ids = log_probs.topk(min(beam_width * 4, log_probs.shape[0]))
                 kept = 0
                 for lp, tid in zip(top_log_probs.tolist(), top_ids.tolist()):
+                    if tid == unk_id:
+                        continue
                     if _would_repeat_ngram(seq, tid, no_repeat_ngram_size):
                         continue
                     candidates.append((seq + [tid], log_prob + lp, h_new, c_new))

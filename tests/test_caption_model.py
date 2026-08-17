@@ -62,3 +62,24 @@ def test_would_repeat_ngram_disabled_when_n_is_zero():
 def test_would_repeat_ngram_no_false_positive_before_enough_history():
     # can't form a trigram at all yet with only 1 prior token
     assert _would_repeat_ngram([1], next_id=1, n=3) is False
+
+
+def test_greedy_generation_never_emits_unk():
+    # untrained (random-init) model, so <unk> is a plausible top logit at
+    # some step by chance -- this exercises the blocking logic for real,
+    # not just when it happens not to matter.
+    model, vocab = _build_model()
+    dummy_image = torch.randn(1, 3, 224, 224)
+
+    caption, _ = model.generate_greedy(dummy_image)
+
+    assert vocab.UNK_TOKEN not in caption.split()
+
+
+def test_beam_search_never_emits_unk():
+    model, vocab = _build_model()
+    dummy_image = torch.randn(1, 3, 224, 224)
+
+    caption = model.generate_beam(dummy_image, beam_width=3)
+
+    assert vocab.UNK_TOKEN not in caption.split()
