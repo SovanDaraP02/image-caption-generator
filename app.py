@@ -146,22 +146,41 @@ def get_device() -> torch.device:
 @st.cache_resource
 def load_blip2() -> tuple[Blip2Processor, Blip2ForConditionalGeneration, torch.device]:
     device = get_device()
-    # float16 on GPU/MPS: halves memory footprint (~11GB -> ~5.5GB) and is
-    # standard practice for inference -- output quality is not meaningfully
-    # affected. CPU-only stays float32 since many CPU kernels don't support
-    # fp16 well (would be slower, not faster, there).
-    dtype = torch.float16 if device.type in ("cuda", "mps") else torch.float32
     processor = Blip2Processor.from_pretrained(BLIP2_CHECKPOINT)
-    model = Blip2ForConditionalGeneration.from_pretrained(BLIP2_CHECKPOINT, torch_dtype=dtype)
-    model.eval()
-    model.to(device)
+
+    if device.type in ("cuda", "mps"):
+        # float16 on GPU/MPS: halves memory footprint (~11GB -> ~5.5GB) and is
+        # standard practice for inference -- output quality is not meaningfully
+        # affected.
+        model = Blip2ForConditionalGeneration.from_pretrained(BLIP2_CHECKPOINT, torch_dtype=torch.float16)
+        model.eval()
+        model.to(device)
+    else:
+        # CPU-only (e.g. free-tier cloud hosting, no GPU/MPS available):
+        # fp16 isn't well-supported by CPU kernels, but dynamic int8
+        # quantization is -- measured ~14.6GB (fp32) -> ~4.6GB resident here,
+        # which is the difference between fitting in free-tier hosting memory
+        # or not. Only quantizes nn.Linear layers (the bulk of a transformer's
+        # parameters); activations are quantized on the fly per forward call,
+        # so inputs stay plain float32 -- no explicit input dtype casting
+        # needed, unlike the fp16 GPU/MPS path.
+        engine = next((e for e in torch.backends.quantized.supported_engines if e != "none"), None)
+        if engine is None:
+            raise RuntimeError("No quantization engine available on this CPU-only platform "
+                                "(torch.backends.quantized.supported_engines is empty)")
+        torch.backends.quantized.engine = engine
+        model = Blip2ForConditionalGeneration.from_pretrained(BLIP2_CHECKPOINT, torch_dtype=torch.float32)
+        model.eval()
+        model = torch.quantization.quantize_dynamic(model, {torch.nn.Linear}, dtype=torch.qint8)
+
     return processor, model, device
 
 
 def caption_image_blip2(processor: Blip2Processor, model: Blip2ForConditionalGeneration,
                          device: torch.device, image: Image.Image) -> str:
     inputs = processor(image.convert("RGB"), return_tensors="pt").to(device)
-    inputs["pixel_values"] = inputs["pixel_values"].to(model.dtype)
+    if device.type in ("cuda", "mps"):
+        inputs["pixel_values"] = inputs["pixel_values"].to(model.dtype)
     with torch.no_grad():
         output_ids = model.generate(**inputs, max_new_tokens=60, num_beams=3)
     return processor.decode(output_ids[0], skip_special_tokens=True).strip()
@@ -293,22 +312,22 @@ st.title("🖼️ Multimodal Image Caption Generator")
 
 BACKEND_CUSTOM = "🎓 My trained model (ResNet + attention + LSTM, built from scratch)"
 BACKEND_BLIP = "BLIP (external pretrained model, reference only)"
-BACKEND_BLIP2 = "BLIP-2 (external pretrained model, richer but slow on CPU, reference only)"
+BACKEND_BLIP2 = "BLIP-2 (external pretrained model, quantized on CPU, reference only)"
 BACKEND_BLIP3 = "BLIP-3 (external pretrained model, experimental, reference only)"
 BACKEND_CLAUDE = "Claude (external pretrained model, most detailed, reference only)"
 
 # PUBLIC_DEMO=true (set as a Space variable on the deployed public link) hides
-# BLIP-2 and BLIP-3: both confirmed (not just theoretical) to crash the app
-# on Streamlit Community Cloud's free tier. BLIP-3 needs ~18GB just for
-# weights; BLIP-2 falls back to float32 on CPU-only hosting (~11GB) --
-# smaller than BLIP-3 but still too large for the free tier in practice
-# (tried it, it crashed the same way). Claude stays public regardless: it's
-# a lightweight API call, no heavy local model to load, and costs the
-# deployer nothing extra since visitors must enter their own API key (no
-# ANTHROPIC_API_KEY secret is set for the public deploy) -- see
-# caption_image_claude's api_key handling below.
+# BLIP-3 only now: needs ~18GB just for weights, confirmed to crash the app
+# on Streamlit Community Cloud's free tier. BLIP-2's CPU-only path
+# originally crashed there too (~11GB, plain float32) -- fixed by dynamic
+# int8 quantization on CPU-only devices (see load_blip2()), which measured
+# ~14.6GB -> ~3.3GB resident here, so it's back on a trial basis. Claude
+# stays public regardless: it's a lightweight API call, no heavy local
+# model to load, and costs the deployer nothing extra since visitors must
+# enter their own API key (no ANTHROPIC_API_KEY secret is set for the
+# public deploy) -- see caption_image_claude's api_key handling below.
 if os.environ.get("PUBLIC_DEMO", "false").lower() == "true":
-    available_backends = [BACKEND_CUSTOM, BACKEND_BLIP, BACKEND_CLAUDE]
+    available_backends = [BACKEND_CUSTOM, BACKEND_BLIP, BACKEND_BLIP2, BACKEND_CLAUDE]
 else:
     available_backends = [BACKEND_CUSTOM, BACKEND_BLIP, BACKEND_BLIP2, BACKEND_BLIP3, BACKEND_CLAUDE]
 
@@ -329,9 +348,9 @@ elif backend == BACKEND_BLIP:
 elif backend == BACKEND_BLIP2:
     st.caption("Not trained by me — Salesforce's pretrained BLIP-2 (~2.7B params, language-model backbone), "
                "shown for comparison. Richer captions than BLIP-large. Runs in float16 on GPU/Apple Silicon "
-               "(~6s/image measured locally) but falls back to float32 on CPU-only hosting (e.g. free-tier "
-               "Hugging Face Spaces), where it's much slower — better suited to local use with a GPU or Apple "
-               "Silicon than a public low-resource deployment.")
+               "(~6s/image measured locally); on CPU-only hosting (e.g. free-tier cloud) it's dynamically "
+               "quantized to int8 instead (measured ~14.6GB -> ~3.3GB resident locally) so it fits free-tier "
+               "memory — still slower there than with a real GPU/MPS, but no longer crashes.")
 elif backend == BACKEND_BLIP3:
     st.caption("Not trained by me — Salesforce's pretrained BLIP-3/xGen-MM (~4.6B params, Phi-3 backbone), "
                "shown for comparison. Instruction-tuned (unlike plain BLIP/BLIP-2), so it can attempt the same "
