@@ -27,3 +27,6 @@ requests
 einops
 einops_exts
 open_clip_torch
+fastapi
+uvicorn[standard]
+python-multipart

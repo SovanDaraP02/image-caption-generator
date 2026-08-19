@@ -1,6 +1,6 @@
 # Multimodal Neural Image Caption Generator
 
-[![CI](https://github.com/<your-username>/image-caption-generator/actions/workflows/ci.yml/badge.svg)](https://github.com/<your-username>/image-caption-generator/actions/workflows/ci.yml)
+[![CI](https://github.com/SovanDaraP02/image-caption-generator/actions/workflows/ci.yml/badge.svg)](https://github.com/SovanDaraP02/image-caption-generator/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.x-ee4c2c)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
@@ -16,6 +16,11 @@ progression.
 Given an image, the model generates a natural-language caption while
 learning to attend to different spatial regions of the image for each
 generated word.
+
+New to this project? [`WRITEUP.md`](./WRITEUP.md) is a 500-word version
+of the Results section below. [`MODEL_CARD.md`](./MODEL_CARD.md) covers
+intended use, training data, and limitations in the standard model-card
+format.
 
 ## Live demo
 [Link to Streamlit Community Cloud deployment — add once deployed, see `DEPLOY_STREAMLIT.md`
@@ -329,33 +334,52 @@ one to use is a platform-availability choice, not an architecture one.
 
 ## Attention visualizations
 
-![attention heatmap example](assets/attention_visualizations/example_1.png)
+![attention heatmap: model correctly attends to the bus for "bus" and the building for "city"](assets/attention_visualizations/example_1.png)
 
-_Generated with `visualize_attention.py`. Each panel shows which image
-region the model attended to while generating that specific word._
+_Generated with `visualize_attention.py` against `best_checkpoint.pth`
+(COCO 113k, fine-tuned CLIP encoder) on a real, held-out COCO validation
+photo. Caption: "a bus is driving down the street in a city." Each panel
+shows which image region the model attended to while generating that
+specific word — "bus" correctly lights up the bus itself; "the"/"in"/
+"city" attend to the building, a reasonable proxy for "urban setting"
+even though "city" isn't a single object to point at._
+
+## Caption examples
+
+Two real outputs from `best_checkpoint.pth` on held-out COCO images,
+picked to show both a clean result and an honest failure, not
+cherry-picked to only show the model at its best:
+
+| | Caption |
+|---|---|
+| ![bathroom photo](assets/examples/good_bathroom.jpg) | **"a bathroom with a toilet and a shower"** — accurate. |
+| ![cows in a dark barn](assets/examples/weak_cows.jpg) | **"two cows standing in a field with a yellow background"** — wrong. There is no field and nothing yellow in the photo; it's two cows in a dimly lit barn at night. Flickr8k/COCO both skew heavily toward cows photographed in daylight pasture scenes, so the model reached for that prior instead of describing what's actually in the (visually unusual) frame. |
 
 ## Limitations
 
-- Trained on Flickr8k only (8,000 images) — small by modern standards,
-  so generalization to unusual scenes is limited
-- Encoder kept frozen throughout training (no fine-tuning), which trades
-  some accuracy for training stability/speed within the project timeline
+- **Trained on ~113,000 images** — roughly 3-4 orders of magnitude
+  below the hundreds of millions used by production vision-language
+  models (e.g. BLIP). Shorter, more generic captions are the expected,
+  honest result of that gap, not a bug.
 - Occasional repetitive captions on out-of-distribution images, a known
   symptom of exposure bias in teacher-forced sequence models — mitigated
   but not eliminated by n-gram-repetition blocking in
   `CaptionModel.generate_greedy`/`generate_beam` (see Engineering notes)
-- **Object hallucination on out-of-distribution scenes**: on a test
-  photo of an empty storefront with no people, the model captioned "a
-  person is sitting on a sidewalk in front of a store" — no person is
-  present. Flickr8k is heavily biased toward photos of people and
-  animals in action; faced with a scene outside that distribution, the
-  model falls back to its strongest prior (a person is doing something)
-  rather than correctly reporting absence. This is a dataset-scale
+- **Object/scene hallucination on out-of-distribution scenes**: see the
+  cows example above, and — from an earlier (Flickr8k-only, ResNet
+  encoder) version of this model — a photo of an empty storefront with
+  no people was captioned "a person is sitting on a sidewalk in front
+  of a store." Both are the same failure mode: faced with a scene
+  outside its training distribution, the model falls back to its
+  strongest learned prior rather than correctly reporting what's
+  actually (or actually not) present. This is a dataset-scale
   limitation, not a decoding-strategy bug — no amount of beam search or
-  repetition blocking fixes a belief the model doesn't have the training
-  data to correct.
+  repetition blocking fixes a belief the model doesn't have the
+  training data to correct.
 - Evaluated with greedy and beam-search decoding only — no length
   normalization or diverse beam search
+- See [`MODEL_CARD.md`](./MODEL_CARD.md) for intended use, training
+  data provenance, and inference-cost numbers.
 
 ## Roadmap
 
@@ -376,6 +400,34 @@ Honest next steps, not yet implemented:
 - **Batch/multi-image captioning** in the Streamlit UI (the model
   already supports batched inference; the demo currently processes
   uploads one at a time in a loop rather than as a true batch)
+
+## Serving the model
+
+Two ways to run this outside the Streamlit demo, for programmatic use:
+
+**Local, with uvicorn:**
+```bash
+uvicorn api:app --reload --port 8000
+curl -F "image=@assets/examples/good_bus.jpg" "http://localhost:8000/caption"
+# optional: ?beam_width=3 for beam search instead of greedy decoding
+```
+
+**Containerized:**
+```bash
+docker build -t caption-generator-api .
+docker run -p 8000:8000 caption-generator-api
+```
+
+`api.py` is a small FastAPI service (`POST /caption`, `GET /health`)
+around the same `CaptionModel` the Streamlit app and `evaluate.py` use —
+the checkpoint loads once at process startup, not per request (see
+`api.py`'s `lifespan` handler), and downloads it automatically the same
+way `app.py` does if it isn't present locally. Tested in
+`tests/test_api.py` against a small untrained model, the same pattern
+`test_caption_model.py` uses, so tests stay fast and don't need the real
+checkpoint. See [`MODEL_CARD.md`](./MODEL_CARD.md) for measured
+per-request latency (~20-45ms/image depending on device and decoding
+strategy).
 
 ## Engineering notes
 
@@ -405,11 +457,20 @@ Honest next steps, not yet implemented:
   that subprocess in a state where cleanup hangs rather than fails
   fast. BLEU and CIDEr don't share this dependency and are unaffected.
   A real, reproducible environment issue, not a modeling one.
-- **Tested, not just self-tested**: `tests/` has 30 pytest tests covering
-  every module (shapes, gradient flow, vocabulary edge cases, dataset
-  batching/augmentation, greedy/beam decoding, n-gram blocking) — runs
-  in ~4 seconds, no GPU or dataset download required. CI runs it on
-  every push.
+- **Tested, not just self-tested**: `tests/` covers every module (shapes,
+  gradient flow, vocabulary edge cases, dataset batching/augmentation,
+  greedy/beam decoding, n-gram blocking) plus the FastAPI service
+  (`test_api.py`) — runs in a few seconds, no GPU or dataset download
+  required. CI runs it on every push.
+- **Linting, formatting, and type-checking**: `ruff check`/`ruff format`
+  and `mypy` are configured in `pyproject.toml` (`pip install -e ".[dev]"`
+  pulls all of it in). Not just present — actually clean: `mypy` passes
+  with zero errors across the package, including the `EncoderCNN`/
+  `EncoderCLIP` union types that CLIP support introduced.
+- **Inference latency, measured not assumed**: `scripts/benchmark_inference.py`
+  times greedy and beam-search decoding on every available device (CPU,
+  MPS, CUDA) — see [`MODEL_CARD.md`](./MODEL_CARD.md) for the numbers
+  this produced on the same machine training ran on.
 
 ## Setup
 
@@ -417,8 +478,9 @@ Honest next steps, not yet implemented:
 git clone <this-repo>
 cd image-caption-generator
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"   # installs the package + pytest, editable
-pytest                     # verify everything works, ~4s
+pip install -e ".[dev]"   # installs the package + pytest/ruff/mypy, editable
+pytest                     # verify everything works, a few seconds
+ruff check . && mypy src/caption_generator   # lint + type-check, both clean
 ```
 
 See [`SETUP_DATA.md`](./SETUP_DATA.md) for downloading Flickr8k, and
@@ -436,7 +498,10 @@ python -m caption_generator.train                 # trains, saves best_checkpoin
 python -m caption_generator.evaluate               # BLEU / METEOR / CIDEr on the test split
 python -m caption_generator.visualize_attention \
     --checkpoint best_checkpoint.pth --image path/to/image.jpg
+python scripts/benchmark_inference.py \
+    --checkpoint best_checkpoint.pth --image path/to/image.jpg   # measure real latency on this machine
 streamlit run app.py                                # local web demo
+uvicorn api:app --reload --port 8000                # JSON API instead — see "Serving the model"
 ```
 
 See [`DEPLOY_SPACES.md`](./DEPLOY_SPACES.md) to put the demo on a public
@@ -459,15 +524,23 @@ image-caption-generator/
 │   ├── train.py
 │   ├── evaluate.py
 │   └── visualize_attention.py
-├── tests/                     # pytest suite, no GPU/dataset needed
+├── tests/                     # pytest suite, no GPU/dataset needed (incl. test_api.py)
 ├── notebooks/
 │   ├── train_colab.ipynb        # Flickr8k baseline training notebook (Colab)
 │   ├── train_colab_coco.ipynb   # larger, more diverse COCO training notebook (Colab)
 │   └── train_kaggle_coco.ipynb  # same COCO training, adapted for Kaggle's longer/more predictable sessions
 ├── scripts/
-│   └── train_local_coco.py    # COCO training on local CUDA/MPS hardware, --encoder resnet50|clip-vit-base-patch32
-├── .github/workflows/ci.yml  # runs pytest on every push
+│   ├── train_local_coco.py    # COCO training on local CUDA/MPS hardware, --encoder resnet50|clip-vit-base-patch32
+│   └── benchmark_inference.py # measures real greedy/beam-search latency per device
+├── assets/
+│   ├── attention_visualizations/  # real heatmap output from visualize_attention.py
+│   └── examples/                   # real good/weak caption examples, referenced in README + MODEL_CARD
+├── .github/workflows/ci.yml  # runs pytest + ruff + mypy on every push
 ├── app.py                    # Streamlit demo (imports the installed package)
+├── api.py                    # FastAPI JSON service (POST /caption) — see "Serving the model"
+├── Dockerfile                 # containerizes api.py
+├── MODEL_CARD.md
+├── WRITEUP.md                 # short, non-technical version of Results
 ├── SETUP_DATA.md
 ├── DEPLOY_SPACES.md
 └── requirements.txt           # mirrors pyproject.toml, needed by Hugging Face Spaces

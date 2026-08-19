@@ -10,9 +10,13 @@ def test_build_assigns_special_tokens_first():
 
 
 def test_min_word_freq_drops_rare_words():
-    vocab = Vocabulary(min_word_freq=2).build([
-        "a dog runs", "a dog barks", "a rare gizmo appears",
-    ])
+    vocab = Vocabulary(min_word_freq=2).build(
+        [
+            "a dog runs",
+            "a dog barks",
+            "a rare gizmo appears",
+        ]
+    )
     assert "dog" in vocab.word2idx
     assert "gizmo" not in vocab.word2idx
 

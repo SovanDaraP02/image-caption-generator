@@ -22,9 +22,14 @@ from caption_generator.models.attention import Attention
 
 
 class DecoderWithAttention(nn.Module):
-    def __init__(self, vocab_size: int, embed_dim: int = 256,
-                 encoder_dim: int = 2048, decoder_dim: int = 512,
-                 attention_dim: int = 256):
+    def __init__(
+        self,
+        vocab_size: int,
+        embed_dim: int = 256,
+        encoder_dim: int = 2048,
+        decoder_dim: int = 512,
+        attention_dim: int = 256,
+    ):
         super().__init__()
         self.vocab_size = vocab_size
         self.decoder_dim = decoder_dim
@@ -42,13 +47,12 @@ class DecoderWithAttention(nn.Module):
         self.dropout = nn.Dropout(0.5)
 
     def init_hidden_state(self, encoder_out: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        mean_encoder_out = encoder_out.mean(dim=1)   # (B, encoder_dim)
-        h = self.init_h(mean_encoder_out)             # (B, decoder_dim)
-        c = self.init_c(mean_encoder_out)              # (B, decoder_dim)
+        mean_encoder_out = encoder_out.mean(dim=1)  # (B, encoder_dim)
+        h = self.init_h(mean_encoder_out)  # (B, decoder_dim)
+        c = self.init_c(mean_encoder_out)  # (B, decoder_dim)
         return h, c
 
-    def forward(self, encoder_out: torch.Tensor,
-                captions: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, encoder_out: torch.Tensor, captions: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Training-mode forward pass with teacher forcing.
 

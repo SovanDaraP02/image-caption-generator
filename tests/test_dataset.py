@@ -3,8 +3,8 @@ import os
 from PIL import Image
 from torch.utils.data import DataLoader
 
-from caption_generator.data.vocabulary import Vocabulary
 from caption_generator.data.dataset import ImageCaptionDataset, collate_fn
+from caption_generator.data.vocabulary import Vocabulary
 
 
 def _make_fake_dataset(tmp_path):
@@ -31,8 +31,7 @@ def test_batch_shapes(tmp_path):
     dataset = ImageCaptionDataset(image_dir, pairs, vocab, split="train")
     pad_idx = vocab.word2idx[vocab.PAD_TOKEN]
 
-    loader = DataLoader(dataset, batch_size=3, shuffle=False,
-                         collate_fn=lambda b: collate_fn(b, pad_idx))
+    loader = DataLoader(dataset, batch_size=3, shuffle=False, collate_fn=lambda b: collate_fn(b, pad_idx))
     images, captions = next(iter(loader))
 
     assert images.shape == (3, 3, 224, 224)
@@ -44,8 +43,9 @@ def test_captions_padded_to_batch_max_length(tmp_path):
     dataset = ImageCaptionDataset(image_dir, pairs, vocab, split="val")
     pad_idx = vocab.word2idx[vocab.PAD_TOKEN]
 
-    loader = DataLoader(dataset, batch_size=len(pairs), shuffle=False,
-                         collate_fn=lambda b: collate_fn(b, pad_idx))
+    loader = DataLoader(
+        dataset, batch_size=len(pairs), shuffle=False, collate_fn=lambda b: collate_fn(b, pad_idx)
+    )
     _, captions = next(iter(loader))
 
     expected_max_len = max(len(vocab.encode(cap)) for _, cap in pairs)

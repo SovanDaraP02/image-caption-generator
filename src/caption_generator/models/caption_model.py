@@ -13,7 +13,7 @@ import torch.nn.functional as F
 
 from caption_generator.data.vocabulary import Vocabulary
 from caption_generator.models.decoder import DecoderWithAttention
-from caption_generator.models.encoder import EncoderCNN
+from caption_generator.models.encoder import EncoderCLIP, EncoderCNN
 
 
 def _would_repeat_ngram(seq: list[int], next_id: int, n: int) -> bool:
@@ -27,8 +27,8 @@ def _would_repeat_ngram(seq: list[int], next_id: int, n: int) -> bool:
     blocking prevents the most visible symptom of it."""
     if n <= 0 or len(seq) < n - 1:
         return False
-    candidate = tuple(seq[-(n - 1):] + [next_id])
-    return any(tuple(seq[i:i + n]) == candidate for i in range(len(seq) - n + 1))
+    candidate = tuple(seq[-(n - 1) :] + [next_id])
+    return any(tuple(seq[i : i + n]) == candidate for i in range(len(seq) - n + 1))
 
 
 class CaptionModel:
@@ -37,8 +37,14 @@ class CaptionModel:
     and decoder directly (see train.py) since that's clearer for
     teacher-forcing forward passes."""
 
-    def __init__(self, encoder: EncoderCNN, decoder: DecoderWithAttention,
-                 vocab: Vocabulary, device: str = "cpu", max_len: int = 25):
+    def __init__(
+        self,
+        encoder: EncoderCNN | EncoderCLIP,
+        decoder: DecoderWithAttention,
+        vocab: Vocabulary,
+        device: str = "cpu",
+        max_len: int = 25,
+    ):
         self.encoder = encoder.to(device).eval()
         self.decoder = decoder.to(device).eval()
         self.vocab = vocab
@@ -46,8 +52,9 @@ class CaptionModel:
         self.max_len = max_len
 
     @torch.no_grad()
-    def generate_greedy(self, image: torch.Tensor,
-                         no_repeat_ngram_size: int = 3) -> tuple[str, list[torch.Tensor]]:
+    def generate_greedy(
+        self, image: torch.Tensor, no_repeat_ngram_size: int = 3
+    ) -> tuple[str, list[torch.Tensor]]:
         """image: (1, 3, 224, 224). Returns (caption_string, alphas list).
 
         no_repeat_ngram_size: block picking a token that would recreate
@@ -91,8 +98,7 @@ class CaptionModel:
         return self.vocab.decode(generated_ids), alphas
 
     @torch.no_grad()
-    def generate_beam(self, image: torch.Tensor, beam_width: int = 3,
-                       no_repeat_ngram_size: int = 3) -> str:
+    def generate_beam(self, image: torch.Tensor, beam_width: int = 3, no_repeat_ngram_size: int = 3) -> str:
         """image: (1, 3, 224, 224). Returns the best caption string.
 
         no_repeat_ngram_size: block candidates that would recreate an
@@ -128,7 +134,7 @@ class CaptionModel:
                 # after any get filtered out by the <unk>/n-gram checks
                 top_log_probs, top_ids = log_probs.topk(min(beam_width * 4, log_probs.shape[0]))
                 kept = 0
-                for lp, tid in zip(top_log_probs.tolist(), top_ids.tolist()):
+                for lp, tid in zip(top_log_probs.tolist(), top_ids.tolist(), strict=True):
                     if tid == unk_id:
                         continue
                     if _would_repeat_ngram(seq, tid, no_repeat_ngram_size):

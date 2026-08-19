@@ -23,5 +23,11 @@ jobs:
       - name: Run tests
         run: pytest -v
 
+      - name: Lint
+        run: ruff check .
+
+      - name: Type-check
+        run: mypy src/caption_generator
+
       - name: Compile-check all scripts
-        run: python -m py_compile app.py src/caption_generator/*.py src/caption_generator/data/*.py src/caption_generator/models/*.py
+        run: python -m py_compile app.py api.py scripts/*.py src/caption_generator/*.py src/caption_generator/data/*.py src/caption_generator/models/*.py

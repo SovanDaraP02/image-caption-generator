@@ -45,8 +45,7 @@ BLIP3_PROMPT_TEMPLATE = (
     "<|user|>\n<image>\n{prompt}<|end|>\n<|assistant|>\n"
 )
 CHECKPOINT_DOWNLOAD_URL = (
-    "https://huggingface.co/sovandara6262/image-caption-generator-checkpoint/"
-    "resolve/main/best_checkpoint.pth"
+    "https://huggingface.co/sovandara6262/image-caption-generator-checkpoint/resolve/main/best_checkpoint.pth"
 )
 DETAILED_DESCRIPTION_PROMPT = (
     "Describe this image in one plain, natural paragraph, like you're telling a "
@@ -77,7 +76,7 @@ DETAILED_DESCRIPTION_PROMPT = (
 def download_checkpoint_if_missing(checkpoint_path: str) -> None:
     if os.path.exists(checkpoint_path):
         return
-    with st.spinner(f"Downloading trained checkpoint (~400MB, first run only)..."):
+    with st.spinner("Downloading trained checkpoint (~400MB, first run only)..."):
         response = requests.get(CHECKPOINT_DOWNLOAD_URL, stream=True, timeout=60)
         response.raise_for_status()
         tmp_path = checkpoint_path + ".part"
@@ -119,8 +118,9 @@ def load_blip() -> tuple[BlipProcessor, BlipForConditionalGeneration]:
     return processor, model
 
 
-def caption_image_blip(processor: BlipProcessor, model: BlipForConditionalGeneration,
-                        image: Image.Image) -> str:
+def caption_image_blip(
+    processor: BlipProcessor, model: BlipForConditionalGeneration, image: Image.Image
+) -> str:
     inputs = processor(image.convert("RGB"), return_tensors="pt")
     with torch.no_grad():
         output_ids = model.generate(
@@ -166,8 +166,10 @@ def load_blip2() -> tuple[Blip2Processor, Blip2ForConditionalGeneration, torch.d
         # needed, unlike the fp16 GPU/MPS path.
         engine = next((e for e in torch.backends.quantized.supported_engines if e != "none"), None)
         if engine is None:
-            raise RuntimeError("No quantization engine available on this CPU-only platform "
-                                "(torch.backends.quantized.supported_engines is empty)")
+            raise RuntimeError(
+                "No quantization engine available on this CPU-only platform "
+                "(torch.backends.quantized.supported_engines is empty)"
+            )
         torch.backends.quantized.engine = engine
         model = Blip2ForConditionalGeneration.from_pretrained(BLIP2_CHECKPOINT, torch_dtype=torch.float32)
         model.eval()
@@ -176,8 +178,9 @@ def load_blip2() -> tuple[Blip2Processor, Blip2ForConditionalGeneration, torch.d
     return processor, model, device
 
 
-def caption_image_blip2(processor: Blip2Processor, model: Blip2ForConditionalGeneration,
-                         device: torch.device, image: Image.Image) -> str:
+def caption_image_blip2(
+    processor: Blip2Processor, model: Blip2ForConditionalGeneration, device: torch.device, image: Image.Image
+) -> str:
     inputs = processor(image.convert("RGB"), return_tensors="pt").to(device)
     if device.type in ("cuda", "mps"):
         inputs["pixel_values"] = inputs["pixel_values"].to(model.dtype)
@@ -189,11 +192,12 @@ def caption_image_blip2(processor: Blip2Processor, model: Blip2ForConditionalGen
 class _EosListStoppingCriteria:
     """From Salesforce's own demo notebook for this model -- stops
     generation at the Phi-3 <|end|> token (id 32007)."""
-    def __init__(self, eos_sequence: list[int] = [32007]):
-        self.eos_sequence = eos_sequence
+
+    def __init__(self, eos_sequence: list[int] | None = None):
+        self.eos_sequence = eos_sequence if eos_sequence is not None else [32007]
 
     def __call__(self, input_ids: torch.Tensor, scores: torch.Tensor, **kwargs) -> bool:
-        last_ids = input_ids[:, -len(self.eos_sequence):].tolist()
+        last_ids = input_ids[:, -len(self.eos_sequence) :].tolist()
         return self.eos_sequence in last_ids
 
 
@@ -221,6 +225,7 @@ def load_blip3():
     #    blanket .to(device, dtype) call on the fully-assembled model, which
     #    recursively overrides both submodules' independently-hardcoded dtypes.
     import open_clip.factory as _oc_factory
+
     _orig_set_device = _oc_factory._set_model_device_and_precision
 
     def _patched_set_device(model, device, precision, is_timm_model=False):
@@ -240,7 +245,9 @@ def load_blip3():
     )
     model = model_cls.from_pretrained(BLIP3_CHECKPOINT, trust_remote_code=True, low_cpu_mem_usage=False)
     model = model.to(device=device, dtype=dtype)
-    tokenizer = AutoTokenizer.from_pretrained(BLIP3_CHECKPOINT, trust_remote_code=True, use_fast=False, legacy=False)
+    tokenizer = AutoTokenizer.from_pretrained(
+        BLIP3_CHECKPOINT, trust_remote_code=True, use_fast=False, legacy=False
+    )
     image_processor = AutoImageProcessor.from_pretrained(BLIP3_CHECKPOINT, trust_remote_code=True)
     tokenizer = model.update_special_tokens(tokenizer)
     model.eval()
@@ -257,30 +264,40 @@ def caption_image_blip3(model, tokenizer, image_processor, device: torch.device,
         if not hasattr(v, "to"):
             return v
         return v.to(device=device, dtype=model.dtype) if v.is_floating_point() else v.to(device=device)
+
     inputs = {k: to_device_dtype(v) for k, v in inputs.items()}
 
     with torch.no_grad():
         generated = model.generate(
-            **inputs, image_size=[image.size],
+            **inputs,
+            image_size=[image.size],
             pad_token_id=tokenizer.pad_token_id,
-            do_sample=False, max_new_tokens=200, top_p=None, num_beams=1,
+            do_sample=False,
+            max_new_tokens=200,
+            top_p=None,
+            num_beams=1,
             stopping_criteria=[_EosListStoppingCriteria()],
         )
     return tokenizer.decode(generated[0], skip_special_tokens=True).split("<|end|>")[0].strip()
 
 
 def preprocess(image: Image.Image, encoder_type: str = "resnet50") -> torch.Tensor:
-    mean, std = (CLIP_MEAN, CLIP_STD) if encoder_type == "clip-vit-base-patch32" else (IMAGENET_MEAN, IMAGENET_STD)
-    transform = T.Compose([
-        T.Resize((224, 224)),
-        T.ToTensor(),
-        T.Normalize(mean, std),
-    ])
+    mean, std = (
+        (CLIP_MEAN, CLIP_STD) if encoder_type == "clip-vit-base-patch32" else (IMAGENET_MEAN, IMAGENET_STD)
+    )
+    transform = T.Compose(
+        [
+            T.Resize((224, 224)),
+            T.ToTensor(),
+            T.Normalize(mean, std),
+        ]
+    )
     return transform(image.convert("RGB")).unsqueeze(0)
 
 
-def caption_image(model: CaptionModel, image: Image.Image, decoding_mode: str,
-                   encoder_type: str = "resnet50") -> str:
+def caption_image(
+    model: CaptionModel, image: Image.Image, decoding_mode: str, encoder_type: str = "resnet50"
+) -> str:
     image_tensor = preprocess(image, encoder_type)
     if decoding_mode == "Greedy":
         caption, _ = model.generate_greedy(image_tensor)
@@ -296,13 +313,18 @@ def caption_image_claude(client: anthropic.Anthropic, image: Image.Image) -> str
     response = client.messages.create(
         model=CLAUDE_MODEL,
         max_tokens=300,
-        messages=[{
-            "role": "user",
-            "content": [
-                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_b64}},
-                {"type": "text", "text": DETAILED_DESCRIPTION_PROMPT},
-            ],
-        }],
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {"type": "base64", "media_type": "image/jpeg", "data": image_b64},
+                    },
+                    {"type": "text", "text": DETAILED_DESCRIPTION_PROMPT},
+                ],
+            }
+        ],
     )
     return response.content[0].text
 
@@ -334,34 +356,44 @@ else:
 backend = st.radio("Captioning model", available_backends)
 
 if backend == BACKEND_CUSTOM:
-    st.caption("**This is the model this project is about**: a CLIP ViT-B/32 encoder (swapped in from an "
-               "ImageNet-pretrained ResNet, then fine-tuned -- see README for why) + Bahdanau attention + LSTM "
-               "decoder, designed, trained, and evaluated from scratch by me (see README for architecture, "
-               "training results, and honestly-documented limitations, e.g. hallucination on out-of-distribution "
-               "scenes). Trained on the full 113k-image COCO split (BLEU-4 0.2601, CIDEr 0.8083 on held-out test "
-               "data — +12% BLEU-4 from swapping ResNet for CLIP, another +4.5% from fine-tuning CLIP's last "
-               "block — see README Results). Shorter, more generic captions than the options below — that's a "
-               "real, expected consequence of training on ~100k images instead of hundreds of millions.")
+    st.caption(
+        "**This is the model this project is about**: a CLIP ViT-B/32 encoder (swapped in from an "
+        "ImageNet-pretrained ResNet, then fine-tuned -- see README for why) + Bahdanau attention + LSTM "
+        "decoder, designed, trained, and evaluated from scratch by me (see README for architecture, "
+        "training results, and honestly-documented limitations, e.g. hallucination on out-of-distribution "
+        "scenes). Trained on the full 113k-image COCO split (BLEU-4 0.2601, CIDEr 0.8083 on held-out test "
+        "data — +12% BLEU-4 from swapping ResNet for CLIP, another +4.5% from fine-tuning CLIP's last "
+        "block — see README Results). Shorter, more generic captions than the options below — that's a "
+        "real, expected consequence of training on ~100k images instead of hundreds of millions."
+    )
 elif backend == BACKEND_BLIP:
-    st.caption("Not trained by me — Salesforce's pretrained BLIP (~470M params), shown for comparison and "
-               "practical use. Short but accurate one-line captions, fast even on CPU, free.")
+    st.caption(
+        "Not trained by me — Salesforce's pretrained BLIP (~470M params), shown for comparison and "
+        "practical use. Short but accurate one-line captions, fast even on CPU, free."
+    )
 elif backend == BACKEND_BLIP2:
-    st.caption("Not trained by me — Salesforce's pretrained BLIP-2 (~2.7B params, language-model backbone), "
-               "shown for comparison. Richer captions than BLIP-large. Runs in float16 on GPU/Apple Silicon "
-               "(~6s/image measured locally); on CPU-only hosting (e.g. free-tier cloud) it's dynamically "
-               "quantized to int8 instead (measured ~14.6GB -> ~3.3GB resident locally) so it fits free-tier "
-               "memory — still slower there than with a real GPU/MPS, but no longer crashes.")
+    st.caption(
+        "Not trained by me — Salesforce's pretrained BLIP-2 (~2.7B params, language-model backbone), "
+        "shown for comparison. Richer captions than BLIP-large. Runs in float16 on GPU/Apple Silicon "
+        "(~6s/image measured locally); on CPU-only hosting (e.g. free-tier cloud) it's dynamically "
+        "quantized to int8 instead (measured ~14.6GB -> ~3.3GB resident locally) so it fits free-tier "
+        "memory — still slower there than with a real GPU/MPS, but no longer crashes."
+    )
 elif backend == BACKEND_BLIP3:
-    st.caption("Not trained by me — Salesforce's pretrained BLIP-3/xGen-MM (~4.6B params, Phi-3 backbone), "
-               "shown for comparison. Instruction-tuned (unlike plain BLIP/BLIP-2), so it can attempt the same "
-               "prioritized/emotion-aware description prompt as Claude below -- realistically weaker at "
-               "following it than Claude, since it's a much smaller model. ~18GB download on first use; the "
-               "official model code needed several compatibility fixes to run on current library versions "
-               "(see load_blip3() for details) -- experimental, not production-grade.")
+    st.caption(
+        "Not trained by me — Salesforce's pretrained BLIP-3/xGen-MM (~4.6B params, Phi-3 backbone), "
+        "shown for comparison. Instruction-tuned (unlike plain BLIP/BLIP-2), so it can attempt the same "
+        "prioritized/emotion-aware description prompt as Claude below -- realistically weaker at "
+        "following it than Claude, since it's a much smaller model. ~18GB download on first use; the "
+        "official model code needed several compatibility fixes to run on current library versions "
+        "(see load_blip3() for details) -- experimental, not production-grade."
+    )
 else:
-    st.caption("Not trained by me — calls the Anthropic API (Claude), shown for comparison and practical use "
-               "when you want the most detailed, accurate result. Requires your own API key; costs a small "
-               "amount per image.")
+    st.caption(
+        "Not trained by me — calls the Anthropic API (Claude), shown for comparison and practical use "
+        "when you want the most detailed, accurate result. Requires your own API key; costs a small "
+        "amount per image."
+    )
 
 model_loaded = True
 model = None
@@ -373,9 +405,10 @@ claude_client = None
 
 if backend == BACKEND_CLAUDE:
     api_key = os.environ.get("ANTHROPIC_API_KEY") or st.text_input(
-        "Anthropic API key", type="password",
+        "Anthropic API key",
+        type="password",
         help="Not set in the environment. Get one at https://console.anthropic.com/settings/keys — "
-             "or set ANTHROPIC_API_KEY before launching the app to skip this prompt.",
+        "or set ANTHROPIC_API_KEY before launching the app to skip this prompt.",
     )
     if api_key:
         claude_client = anthropic.Anthropic(api_key=api_key)
@@ -396,16 +429,21 @@ elif backend == BACKEND_CUSTOM:
         model, model_encoder_type = load_model()
     except requests.exceptions.RequestException as e:
         model_loaded = False
-        st.warning(f"Couldn't download the trained checkpoint ({e}). "
-                   "Check your internet connection and reload the page.")
+        st.warning(
+            f"Couldn't download the trained checkpoint ({e}). "
+            "Check your internet connection and reload the page."
+        )
     except FileNotFoundError:
         model_loaded = False
-        st.warning("No trained checkpoint found yet (best_checkpoint.pth), and the automatic "
-                   "download failed. Train the model first (see notebooks/train_colab.ipynb), "
-                   "then place the checkpoint in this folder.")
+        st.warning(
+            "No trained checkpoint found yet (best_checkpoint.pth), and the automatic "
+            "download failed. Train the model first (see notebooks/train_colab.ipynb), "
+            "then place the checkpoint in this folder."
+        )
 
 uploaded_files = st.file_uploader(
-    "Upload one or more images", type=["jpg", "jpeg", "png"],
+    "Upload one or more images",
+    type=["jpg", "jpeg", "png"],
     accept_multiple_files=True,
 )
 

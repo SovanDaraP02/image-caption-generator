@@ -7,9 +7,12 @@ from caption_generator.models.encoder import EncoderCNN
 
 
 def _build_model():
-    vocab = Vocabulary(min_word_freq=1).build([
-        "a dog runs in the grass", "a cat sits on the mat",
-    ])
+    vocab = Vocabulary(min_word_freq=1).build(
+        [
+            "a dog runs in the grass",
+            "a cat sits on the mat",
+        ]
+    )
     encoder = EncoderCNN(fine_tune=False, pretrained=False)
     decoder = DecoderWithAttention(vocab_size=len(vocab), encoder_dim=2048)
     return CaptionModel(encoder, decoder, vocab, device="cpu", max_len=10), vocab

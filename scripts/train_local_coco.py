@@ -27,7 +27,14 @@ import torch.nn as nn
 from datasets import load_dataset
 from torch.utils.data import DataLoader
 
-from caption_generator.data.dataset import CLIP_MEAN, CLIP_STD, IMAGENET_MEAN, IMAGENET_STD, ImageCaptionDataset, collate_fn
+from caption_generator.data.dataset import (
+    CLIP_MEAN,
+    CLIP_STD,
+    IMAGENET_MEAN,
+    IMAGENET_STD,
+    ImageCaptionDataset,
+    collate_fn,
+)
 from caption_generator.data.vocabulary import Vocabulary
 from caption_generator.models.decoder import DecoderWithAttention
 from caption_generator.models.encoder import EncoderCLIP, EncoderCNN
@@ -59,8 +66,9 @@ def collect_split_examples(hf_splits: list[str], n: int) -> list[dict]:
     return examples
 
 
-def download_images(examples: list[dict], max_workers: int = 32,
-                     max_retries: int = 2) -> list[tuple[str, str]]:
+def download_images(
+    examples: list[dict], max_workers: int = 32, max_retries: int = 2
+) -> list[tuple[str, str]]:
     """Downloads to IMAGE_DIR, returns (image_filename, caption) pairs --
     one pair per caption. Skips files that already exist, so re-running
     after an interruption only downloads what's missing."""
@@ -96,8 +104,10 @@ def download_images(examples: list[dict], max_workers: int = 32,
                 failed += 1
             if i % 500 == 0 or i == len(examples):
                 elapsed = time.time() - start
-                print(f"  downloaded {i}/{len(examples)} images "
-                      f"({failed} failed) -- {elapsed:.0f}s elapsed", flush=True)
+                print(
+                    f"  downloaded {i}/{len(examples)} images ({failed} failed) -- {elapsed:.0f}s elapsed",
+                    flush=True,
+                )
     return pairs
 
 
@@ -138,23 +148,35 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--early-stop-patience", type=int, default=3)
     parser.add_argument("--batch-size", type=int, default=64)
-    parser.add_argument("--encoder", choices=["resnet50", "clip-vit-base-patch32"], default="resnet50",
-                         help="resnet50: ImageNet-classification features (original). "
-                              "clip-vit-base-patch32: CLIP's contrastively-pretrained, "
-                              "language-aligned features -- see EncoderCLIP's docstring.")
+    parser.add_argument(
+        "--encoder",
+        choices=["resnet50", "clip-vit-base-patch32"],
+        default="resnet50",
+        help="resnet50: ImageNet-classification features (original). "
+        "clip-vit-base-patch32: CLIP's contrastively-pretrained, "
+        "language-aligned features -- see EncoderCLIP's docstring.",
+    )
     parser.add_argument("--lr", type=float, default=4e-4, help="decoder learning rate")
-    parser.add_argument("--finetune-from", type=str, default=None,
-                         help="Warm-start encoder+decoder from this checkpoint instead of training "
-                              "from scratch, and unfreeze the encoder's last block "
-                              "(EncoderCLIP/EncoderCNN fine_tune=True) with its own, much lower "
-                              "learning rate (--encoder-lr). For continuing an already-converged "
-                              "frozen-encoder run into a fine-tuning phase, not for resuming an "
-                              "interrupted run of this same script (that's automatic, see latest_path).")
-    parser.add_argument("--encoder-lr", type=float, default=1e-5,
-                         help="learning rate for the newly-unfrozen encoder block when "
-                              "--finetune-from is set -- deliberately much lower than --lr so "
-                              "large early gradients (decoder is far more converged than the "
-                              "encoder is used to seeing) don't destroy the pretrained features.")
+    parser.add_argument(
+        "--finetune-from",
+        type=str,
+        default=None,
+        help="Warm-start encoder+decoder from this checkpoint instead of training "
+        "from scratch, and unfreeze the encoder's last block "
+        "(EncoderCLIP/EncoderCNN fine_tune=True) with its own, much lower "
+        "learning rate (--encoder-lr). For continuing an already-converged "
+        "frozen-encoder run into a fine-tuning phase, not for resuming an "
+        "interrupted run of this same script (that's automatic, see latest_path).",
+    )
+    parser.add_argument(
+        "--encoder-lr",
+        type=float,
+        default=1e-5,
+        help="learning rate for the newly-unfrozen encoder block when "
+        "--finetune-from is set -- deliberately much lower than --lr so "
+        "large early gradients (decoder is far more converged than the "
+        "encoder is used to seeing) don't destroy the pretrained features.",
+    )
     args = parser.parse_args()
 
     # Suffix checkpoint paths by encoder (and fine-tuning phase) so runs
@@ -168,8 +190,10 @@ def main() -> None:
 
     os.makedirs(DATA_DIR, exist_ok=True)
     device = get_device()
-    print(f"Using device: {device}, encoder: {args.encoder}"
-          + (f", fine-tuning from: {args.finetune_from}" if args.finetune_from else ""))
+    print(
+        f"Using device: {device}, encoder: {args.encoder}"
+        + (f", fine-tuning from: {args.finetune_from}" if args.finetune_from else "")
+    )
 
     data = build_pairs(args.n_train, args.n_val, args.n_test)
     train_pairs = [tuple(p) for p in data["train"]]
@@ -203,10 +227,20 @@ def main() -> None:
     # method away from fork on this platform, which can't pickle the
     # closure-based collate_fn lambda below. The GPU (MPS) forward/backward
     # pass is the actual bottleneck here, not single-process data loading.
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True,
-                               collate_fn=lambda b: collate_fn(b, pad_idx), num_workers=0)
-    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False,
-                             collate_fn=lambda b: collate_fn(b, pad_idx), num_workers=0)
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        collate_fn=lambda b: collate_fn(b, pad_idx),
+        num_workers=0,
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        collate_fn=lambda b: collate_fn(b, pad_idx),
+        num_workers=0,
+    )
 
     fine_tune_encoder = bool(args.finetune_from)
     if args.encoder == "clip-vit-base-patch32":
@@ -234,10 +268,12 @@ def main() -> None:
         # its pretrained weights in a step or two. encoder_params is
         # whichever ones fine_tune=True actually unfroze (requires_grad=True).
         encoder_params = [p for p in encoder.parameters() if p.requires_grad]
-        optimizer = torch.optim.Adam([
-            {"params": decoder.parameters(), "lr": args.lr},
-            {"params": encoder_params, "lr": args.encoder_lr},
-        ])
+        optimizer = torch.optim.Adam(
+            [
+                {"params": decoder.parameters(), "lr": args.lr},
+                {"params": encoder_params, "lr": args.encoder_lr},
+            ]
+        )
 
         # Establish this run's real baseline before training -- comparing
         # against the frozen-encoder starting point, not an arbitrary
@@ -261,13 +297,17 @@ def main() -> None:
         # start fresh and warn loudly than to silently resume broken or crash
         # mid-run.
         if checkpoint_vocab_size != len(vocab):
-            print(f"WARNING: found {latest_path}, but its vocab size ({checkpoint_vocab_size}) doesn't "
-                  f"match this run's vocab ({len(vocab)}) -- it's from a different-sized run. "
-                  "Starting fresh instead of resuming. Move or delete that file to silence this warning.")
+            print(
+                f"WARNING: found {latest_path}, but its vocab size ({checkpoint_vocab_size}) doesn't "
+                f"match this run's vocab ({len(vocab)}) -- it's from a different-sized run. "
+                "Starting fresh instead of resuming. Move or delete that file to silence this warning."
+            )
         elif checkpoint_encoder != args.encoder:
-            print(f"WARNING: found {latest_path}, but it was trained with encoder '{checkpoint_encoder}', "
-                  f"not this run's '{args.encoder}'. Starting fresh instead of resuming. "
-                  "Move or delete that file to silence this warning.")
+            print(
+                f"WARNING: found {latest_path}, but it was trained with encoder '{checkpoint_encoder}', "
+                f"not this run's '{args.encoder}'. Starting fresh instead of resuming. "
+                "Move or delete that file to silence this warning."
+            )
         else:
             print(f"Found a previous run's checkpoint at {latest_path} -- resuming instead of starting over.")
             encoder.load_state_dict(ckpt["encoder_state"])
@@ -291,8 +331,11 @@ def main() -> None:
         scheduler.step(val_loss)
         current_lr = optimizer.param_groups[0]["lr"]
         elapsed = time.time() - epoch_start
-        print(f"Epoch {epoch}/{args.epochs}  train_loss={train_loss:.4f}  val_loss={val_loss:.4f}  "
-              f"lr={current_lr:.2e}  ({elapsed:.0f}s)", flush=True)
+        print(
+            f"Epoch {epoch}/{args.epochs}  train_loss={train_loss:.4f}  val_loss={val_loss:.4f}  "
+            f"lr={current_lr:.2e}  ({elapsed:.0f}s)",
+            flush=True,
+        )
 
         improved = val_loss < best_val_loss
         if improved:
@@ -301,27 +344,33 @@ def main() -> None:
         else:
             epochs_without_improvement += 1
 
-        torch.save({
-            "encoder_state": encoder.state_dict(),
-            "decoder_state": decoder.state_dict(),
-            "optimizer_state": optimizer.state_dict(),
-            "scheduler_state": scheduler.state_dict(),
-            "vocab_word2idx": vocab.word2idx,
-            "vocab_idx2word": vocab.idx2word,
-            "epoch": epoch,
-            "best_val_loss": best_val_loss,
-            "epochs_without_improvement": epochs_without_improvement,
-            "encoder_type": args.encoder,
-        }, latest_path)
-
-        if improved:
-            torch.save({
+        torch.save(
+            {
                 "encoder_state": encoder.state_dict(),
                 "decoder_state": decoder.state_dict(),
+                "optimizer_state": optimizer.state_dict(),
+                "scheduler_state": scheduler.state_dict(),
                 "vocab_word2idx": vocab.word2idx,
                 "vocab_idx2word": vocab.idx2word,
+                "epoch": epoch,
+                "best_val_loss": best_val_loss,
+                "epochs_without_improvement": epochs_without_improvement,
                 "encoder_type": args.encoder,
-            }, best_path)
+            },
+            latest_path,
+        )
+
+        if improved:
+            torch.save(
+                {
+                    "encoder_state": encoder.state_dict(),
+                    "decoder_state": decoder.state_dict(),
+                    "vocab_word2idx": vocab.word2idx,
+                    "vocab_idx2word": vocab.idx2word,
+                    "encoder_type": args.encoder,
+                },
+                best_path,
+            )
             print(f"  -> saved new best checkpoint to {best_path} (val_loss={val_loss:.4f})")
 
         if epochs_without_improvement >= args.early_stop_patience:
@@ -338,6 +387,7 @@ def main() -> None:
     # indefinitely on failure (see README's Engineering notes / evaluate.py).
     # BLEU and CIDEr don't share that dependency.
     from caption_generator.evaluate import evaluate
+
     scores = evaluate(best_path, dict(test_pairs_by_image), IMAGE_DIR, device=device, skip_meteor=True)
     for metric, value in scores.items():
         print(f"{metric}: {value:.4f}")

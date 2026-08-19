@@ -21,8 +21,13 @@ from caption_generator.models.decoder import DecoderWithAttention
 from caption_generator.models.encoder import EncoderCLIP, EncoderCNN
 
 
-def evaluate(checkpoint_path: str, test_pairs_by_image: dict[str, list[str]],
-             image_dir: str, device: str = "cpu", skip_meteor: bool = False) -> dict[str, float]:
+def evaluate(
+    checkpoint_path: str,
+    test_pairs_by_image: dict[str, list[str]],
+    image_dir: str,
+    device: str = "cpu",
+    skip_meteor: bool = False,
+) -> dict[str, float]:
     """
     test_pairs_by_image: {image_filename: [ref_caption_1, ref_caption_2, ...]}
                           -- captioning metrics need ALL reference captions
@@ -44,6 +49,7 @@ def evaluate(checkpoint_path: str, test_pairs_by_image: dict[str, list[str]],
     # encoder_type is absent on checkpoints saved before EncoderCLIP existed
     # -- default to "resnet50" so those old checkpoints still evaluate.
     encoder_type = checkpoint.get("encoder_type", "resnet50")
+    encoder: EncoderCNN | EncoderCLIP
     if encoder_type == "clip-vit-base-patch32":
         encoder = EncoderCLIP(fine_tune=False)
         decoder = DecoderWithAttention(vocab_size=len(vocab), encoder_dim=EncoderCLIP.OUTPUT_DIM)
@@ -59,11 +65,14 @@ def evaluate(checkpoint_path: str, test_pairs_by_image: dict[str, list[str]],
 
     import torchvision.transforms as T
     from PIL import Image
-    transform = T.Compose([
-        T.Resize((224, 224)),
-        T.ToTensor(),
-        T.Normalize(mean, std),
-    ])
+
+    transform = T.Compose(
+        [
+            T.Resize((224, 224)),
+            T.ToTensor(),
+            T.Normalize(mean, std),
+        ]
+    )
 
     gts, res = {}, {}  # ground truths / results, keyed by image id, pycocoevalcap format
     for i, (filename, references) in enumerate(test_pairs_by_image.items()):

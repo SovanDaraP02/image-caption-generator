@@ -52,7 +52,7 @@ class Vocabulary:
         Only pass the training split -- fitting on validation/test
         captions is a data leak.
         """
-        counter = Counter()
+        counter: Counter[str] = Counter()
         for cap in captions:
             counter.update(self.tokenize(cap))
 
@@ -77,8 +77,7 @@ class Vocabulary:
     def decode(self, ids: list[int], strip_special: bool = True) -> str:
         words = [self.idx2word.get(i, self.UNK_TOKEN) for i in ids]
         if strip_special:
-            words = [w for w in words if w not in
-                     (self.PAD_TOKEN, self.START_TOKEN, self.END_TOKEN)]
+            words = [w for w in words if w not in (self.PAD_TOKEN, self.START_TOKEN, self.END_TOKEN)]
         return " ".join(words)
 
     def __len__(self) -> int:

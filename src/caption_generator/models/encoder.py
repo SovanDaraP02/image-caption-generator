@@ -22,8 +22,7 @@ class EncoderCNN(nn.Module):
         "resnet152": (torchvision.models.resnet152, "ResNet152_Weights", "IMAGENET1K_V2"),
     }
 
-    def __init__(self, fine_tune: bool = False, pretrained: bool = True,
-                 backbone: str = "resnet50"):
+    def __init__(self, fine_tune: bool = False, pretrained: bool = True, backbone: str = "resnet50"):
         super().__init__()
 
         if backbone not in self._BACKBONES:
@@ -41,9 +40,11 @@ class EncoderCNN(nn.Module):
                 weights_enum = getattr(torchvision.models, weights_enum_name)
                 resnet = model_fn(weights=getattr(weights_enum, weights_tag))
             except Exception as e:
-                print(f"[EncoderCNN] Could not download pretrained weights ({e}). "
-                      f"Falling back to random init -- fine for shape tests, "
-                      f"NOT fine for real training.")
+                print(
+                    f"[EncoderCNN] Could not download pretrained weights ({e}). "
+                    f"Falling back to random init -- fine for shape tests, "
+                    f"NOT fine for real training."
+                )
                 resnet = model_fn(weights=None)
         else:
             resnet = model_fn(weights=None)
@@ -61,10 +62,10 @@ class EncoderCNN(nn.Module):
         images: (B, 3, 224, 224)
         returns: (B, 49, 2048)  -- 49 spatial regions, each 2048-dim
         """
-        features = self.resnet(images)              # (B, 2048, 7, 7)
+        features = self.resnet(images)  # (B, 2048, 7, 7)
         B, C, H, W = features.shape
-        features = features.permute(0, 2, 3, 1)      # (B, 7, 7, 2048)
-        features = features.reshape(B, H * W, C)      # (B, 49, 2048)
+        features = features.permute(0, 2, 3, 1)  # (B, 7, 7, 2048)
+        features = features.reshape(B, H * W, C)  # (B, 49, 2048)
         return features
 
     def fine_tune(self, fine_tune: bool = False) -> None:
@@ -118,9 +119,11 @@ class EncoderCLIP(nn.Module):
             try:
                 self.clip = CLIPVisionModel.from_pretrained(self.CHECKPOINT)
             except Exception as e:
-                print(f"[EncoderCLIP] Could not download pretrained weights ({e}). "
-                      f"Falling back to random init -- fine for shape tests, "
-                      f"NOT fine for real training.")
+                print(
+                    f"[EncoderCLIP] Could not download pretrained weights ({e}). "
+                    f"Falling back to random init -- fine for shape tests, "
+                    f"NOT fine for real training."
+                )
                 self.clip = CLIPVisionModel(CLIPVisionConfig(image_size=224, patch_size=32))
         else:
             self.clip = CLIPVisionModel(CLIPVisionConfig(image_size=224, patch_size=32))

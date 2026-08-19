@@ -32,9 +32,15 @@ CLIP_STD = [0.26862954, 0.26130258, 0.27577711]
 
 
 class ImageCaptionDataset(Dataset):
-    def __init__(self, image_dir: str, image_caption_pairs: list[tuple[str, str]],
-                 vocab: Vocabulary, split: str = "train",
-                 mean: list[float] = IMAGENET_MEAN, std: list[float] = IMAGENET_STD):
+    def __init__(
+        self,
+        image_dir: str,
+        image_caption_pairs: list[tuple[str, str]],
+        vocab: Vocabulary,
+        split: str = "train",
+        mean: list[float] = IMAGENET_MEAN,
+        std: list[float] = IMAGENET_STD,
+    ):
         """
         image_dir: path to the Images/ folder
         image_caption_pairs: list of (image_filename, raw_caption_string)
@@ -49,20 +55,24 @@ class ImageCaptionDataset(Dataset):
         self.vocab = vocab
 
         if split == "train":
-            self.transform = T.Compose([
-                T.Resize((256, 256)),
-                T.RandomCrop(224),
-                T.RandomHorizontalFlip(),
-                T.ToTensor(),
-                T.Normalize(mean, std),
-            ])
+            self.transform = T.Compose(
+                [
+                    T.Resize((256, 256)),
+                    T.RandomCrop(224),
+                    T.RandomHorizontalFlip(),
+                    T.ToTensor(),
+                    T.Normalize(mean, std),
+                ]
+            )
         else:
-            self.transform = T.Compose([
-                T.Resize((256, 256)),
-                T.CenterCrop(224),
-                T.ToTensor(),
-                T.Normalize(mean, std),
-            ])
+            self.transform = T.Compose(
+                [
+                    T.Resize((256, 256)),
+                    T.CenterCrop(224),
+                    T.ToTensor(),
+                    T.Normalize(mean, std),
+                ]
+            )
 
     def __len__(self) -> int:
         return len(self.pairs)
@@ -76,10 +86,11 @@ class ImageCaptionDataset(Dataset):
         return image, caption_ids
 
 
-def collate_fn(batch: list[tuple[torch.Tensor, torch.Tensor]],
-                pad_idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+def collate_fn(
+    batch: list[tuple[torch.Tensor, torch.Tensor]], pad_idx: int
+) -> tuple[torch.Tensor, torch.Tensor]:
     """batch: list of (image, caption_ids) tuples from __getitem__."""
-    images, captions = zip(*batch)
-    images = torch.stack(images, dim=0)  # (B, 3, 224, 224)
-    captions = pad_sequence(captions, batch_first=True, padding_value=pad_idx)  # (B, T_max)
+    image_list, caption_list = zip(*batch, strict=True)
+    images = torch.stack(image_list, dim=0)  # (B, 3, 224, 224)
+    captions = pad_sequence(list(caption_list), batch_first=True, padding_value=pad_idx)  # (B, T_max)
     return images, captions

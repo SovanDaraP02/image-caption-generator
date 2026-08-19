@@ -23,18 +23,25 @@ from caption_generator.models.decoder import DecoderWithAttention
 from caption_generator.models.encoder import EncoderCNN
 
 
-def train_one_epoch(encoder: EncoderCNN, decoder: DecoderWithAttention,
-                     loader: DataLoader, optimizer: torch.optim.Optimizer,
-                     criterion: nn.Module, device: torch.device, pad_idx: int,
-                     alpha_reg_lambda: float = 1.0, grad_clip: float = 5.0) -> float:
+def train_one_epoch(
+    encoder: EncoderCNN,
+    decoder: DecoderWithAttention,
+    loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    criterion: nn.Module,
+    device: torch.device,
+    pad_idx: int,
+    alpha_reg_lambda: float = 1.0,
+    grad_clip: float = 5.0,
+) -> float:
     decoder.train()
     total_loss = 0.0
 
     for images, captions in loader:
         images, captions = images.to(device), captions.to(device)
 
-        encoder_out = encoder(images)                       # (B, 49, 2048)
-        logits, alphas = decoder(encoder_out, captions)      # teacher forcing
+        encoder_out = encoder(images)  # (B, 49, 2048)
+        logits, alphas = decoder(encoder_out, captions)  # teacher forcing
 
         targets = captions[:, 1:]  # predict tokens 1..T-1
         loss = criterion(logits.reshape(-1, logits.shape[-1]), targets.reshape(-1))
@@ -55,8 +62,13 @@ def train_one_epoch(encoder: EncoderCNN, decoder: DecoderWithAttention,
 
 
 @torch.no_grad()
-def validate(encoder: EncoderCNN, decoder: DecoderWithAttention, loader: DataLoader,
-             criterion: nn.Module, device: torch.device) -> float:
+def validate(
+    encoder: EncoderCNN,
+    decoder: DecoderWithAttention,
+    loader: DataLoader,
+    criterion: nn.Module,
+    device: torch.device,
+) -> float:
     decoder.eval()
     total_loss = 0.0
     for images, captions in loader:
@@ -81,7 +93,7 @@ def main() -> None:
     # See SETUP_DATA.md for downloading Flickr8k + captions.txt, or run
     # notebooks/train_colab.ipynb, which builds these from the real
     # dataset and calls train_one_epoch/validate directly.
-    TRAIN_PAIRS: list[tuple[str, str]] = []   # (image_filename, raw_caption)
+    TRAIN_PAIRS: list[tuple[str, str]] = []  # (image_filename, raw_caption)
     VAL_PAIRS: list[tuple[str, str]] = []
     IMAGE_DIR = "data/flickr8k/Images"
     TRAIN_CAPTIONS_RAW = [cap for _, cap in TRAIN_PAIRS]
@@ -92,10 +104,12 @@ def main() -> None:
     train_dataset = ImageCaptionDataset(IMAGE_DIR, TRAIN_PAIRS, vocab, split="train")
     val_dataset = ImageCaptionDataset(IMAGE_DIR, VAL_PAIRS, vocab, split="val")
 
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True,
-                               collate_fn=lambda b: collate_fn(b, pad_idx))
-    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False,
-                             collate_fn=lambda b: collate_fn(b, pad_idx))
+    train_loader = DataLoader(
+        train_dataset, batch_size=32, shuffle=True, collate_fn=lambda b: collate_fn(b, pad_idx)
+    )
+    val_loader = DataLoader(
+        val_dataset, batch_size=32, shuffle=False, collate_fn=lambda b: collate_fn(b, pad_idx)
+    )
 
     encoder = EncoderCNN(fine_tune=False).to(device)
     decoder = DecoderWithAttention(vocab_size=len(vocab)).to(device)
@@ -106,8 +120,7 @@ def main() -> None:
     # Halve the LR when val_loss plateaus for 2 epochs -- a fixed LR for
     # the whole run tends to overshoot once the decoder is past its
     # first few epochs of easy gains.
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.5, patience=2)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=2)
 
     NUM_EPOCHS = 15  # early stopping below decides the real stopping point
     EARLY_STOP_PATIENCE = 4  # epochs with no val_loss improvement before quitting
@@ -115,23 +128,27 @@ def main() -> None:
     epochs_without_improvement = 0
 
     for epoch in range(1, NUM_EPOCHS + 1):
-        train_loss = train_one_epoch(encoder, decoder, train_loader, optimizer,
-                                      criterion, device, pad_idx)
+        train_loss = train_one_epoch(encoder, decoder, train_loader, optimizer, criterion, device, pad_idx)
         val_loss = validate(encoder, decoder, val_loader, criterion, device)
         scheduler.step(val_loss)
         current_lr = optimizer.param_groups[0]["lr"]
-        print(f"Epoch {epoch}/{NUM_EPOCHS}  train_loss={train_loss:.4f}  "
-              f"val_loss={val_loss:.4f}  lr={current_lr:.2e}")
+        print(
+            f"Epoch {epoch}/{NUM_EPOCHS}  train_loss={train_loss:.4f}  "
+            f"val_loss={val_loss:.4f}  lr={current_lr:.2e}"
+        )
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             epochs_without_improvement = 0
-            torch.save({
-                "encoder_state": encoder.state_dict(),
-                "decoder_state": decoder.state_dict(),
-                "vocab_word2idx": vocab.word2idx,
-                "vocab_idx2word": vocab.idx2word,
-            }, "best_checkpoint.pth")
+            torch.save(
+                {
+                    "encoder_state": encoder.state_dict(),
+                    "decoder_state": decoder.state_dict(),
+                    "vocab_word2idx": vocab.word2idx,
+                    "vocab_idx2word": vocab.idx2word,
+                },
+                "best_checkpoint.pth",
+            )
             print(f"  -> saved new best checkpoint (val_loss={val_loss:.4f})")
         else:
             epochs_without_improvement += 1
