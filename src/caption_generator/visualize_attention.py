@@ -16,10 +16,11 @@ import torchvision.transforms as T
 from PIL import Image
 from scipy.ndimage import zoom
 
+from caption_generator.data.dataset import CLIP_MEAN, CLIP_STD, IMAGENET_MEAN, IMAGENET_STD
 from caption_generator.data.vocabulary import Vocabulary
 from caption_generator.models.caption_model import CaptionModel
 from caption_generator.models.decoder import DecoderWithAttention
-from caption_generator.models.encoder import EncoderCNN
+from caption_generator.models.encoder import EncoderCLIP, EncoderCNN
 
 
 def visualize(checkpoint_path: str, image_path: str, out_path: str = "attention_heatmap.png") -> None:
@@ -29,18 +30,30 @@ def visualize(checkpoint_path: str, image_path: str, out_path: str = "attention_
     vocab.word2idx = checkpoint["vocab_word2idx"]
     vocab.idx2word = checkpoint["vocab_idx2word"]
 
-    encoder = EncoderCNN(fine_tune=False)
+    # encoder_type is absent on checkpoints saved before EncoderCLIP existed
+    # -- default to "resnet50" so those old checkpoints still work here too.
+    encoder_type = checkpoint.get("encoder_type", "resnet50")
+    encoder: EncoderCNN | EncoderCLIP
+    if encoder_type == "clip-vit-base-patch32":
+        encoder = EncoderCLIP(fine_tune=False)
+        decoder = DecoderWithAttention(vocab_size=len(vocab), encoder_dim=EncoderCLIP.OUTPUT_DIM)
+        mean, std = CLIP_MEAN, CLIP_STD
+    else:
+        encoder = EncoderCNN(fine_tune=False)
+        decoder = DecoderWithAttention(vocab_size=len(vocab))
+        mean, std = IMAGENET_MEAN, IMAGENET_STD
     encoder.load_state_dict(checkpoint["encoder_state"])
-    decoder = DecoderWithAttention(vocab_size=len(vocab))
     decoder.load_state_dict(checkpoint["decoder_state"])
 
     model = CaptionModel(encoder, decoder, vocab, device="cpu")
 
     raw_image = Image.open(image_path).convert("RGB").resize((224, 224))
-    transform = T.Compose([
-        T.ToTensor(),
-        T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-    ])
+    transform = T.Compose(
+        [
+            T.ToTensor(),
+            T.Normalize(mean, std),
+        ]
+    )
     image_tensor = transform(raw_image).unsqueeze(0)
 
     caption, alphas = model.generate_greedy(image_tensor)
