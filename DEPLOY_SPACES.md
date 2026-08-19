@@ -1,29 +1,40 @@
 # Deploying the live demo to Hugging Face Spaces
 
-`app.py` is already a working Streamlit app — this just puts it on a public
-URL you can hand to anyone (a reviewer, a recruiter, Mr. Khim) without them
-installing anything.
+`app.py` is already a working Streamlit app — this puts it on a public URL
+you can hand to anyone (a reviewer, a recruiter) without them installing
+anything.
 
-**Note:** as of writing, Hugging Face requires a payment method on file
-(even for the free `cpu-basic` tier) before a *new* account can create a
-live-compute Space (Streamlit/Gradio/Docker) — confirmed via
-`whoami()`'s `canPay`/`isPro` fields returning a 402 on `create_repo`
-otherwise. Only fully-static Spaces are exempt, which can't run this
-app. If you don't want to add a card, see
-[`DEPLOY_STREAMLIT.md`](./DEPLOY_STREAMLIT.md) instead — Streamlit
-Community Cloud is free with no payment method required and deploys
-this exact app directly from GitHub.
+**Why Spaces over Streamlit Community Cloud** (see `DEPLOY_STREAMLIT.md`
+for that alternative): Spaces' free `cpu-basic` tier gives ~16GB RAM.
+Streamlit Community Cloud's free tier gives roughly ~1GB. That gap matters
+specifically for the BLIP-2 backend — even after int8 quantization,
+`load_blip2()`'s CPU path has to materialize the *full fp32* model
+(~14.6GB peak) before it can shrink it down, and no amount of quantization
+changes that peak. ~1GB hosts crash there; ~16GB hosts have room. If
+you don't care about BLIP-2 working on the public link, Streamlit
+Community Cloud is simpler to set up (see `DEPLOY_STREAMLIT.md`) and this
+distinction doesn't matter.
 
-**Prerequisite:** you need a trained `best_checkpoint.pth` first (run
-`notebooks/train_colab.ipynb` on Colab — see the main README).
+**Note:** Hugging Face requires a payment method on file (even for the
+free `cpu-basic` tier) before a *new* account can create a live-compute
+Space (Streamlit/Gradio/Docker) — confirmed via `whoami()`'s `canPay`/
+`isPro` fields returning a 402 on `create_repo` otherwise. This doesn't
+cost anything on the free tier; it's Hugging Face's fraud-prevention
+check, not a charge.
+
+**Prerequisite:** none — `app.py`'s `load_model()` downloads
+`best_checkpoint.pth` automatically on first run from a public Hugging
+Face model repo (`CHECKPOINT_DOWNLOAD_URL` in `app.py`) if it isn't
+already present. Nothing needs to be uploaded by hand.
 
 ## 1. Create the Space
 
 1. Go to [huggingface.co/new-space](https://huggingface.co/new-space) (sign
-   up if you don't have an account — free)
+   up if you don't have an account — free, card required per the note above)
 2. Space name: `image-caption-generator` (or anything you like)
 3. SDK: **Streamlit**
-4. Hardware: CPU basic (free) — inference on one image at a time is fine on CPU
+4. Hardware: **CPU basic (free)** — 16GB RAM, enough for BLIP-2's CPU path;
+   don't downgrade this if you want BLIP-2 to work on the public link
 5. Visibility: Public (so the link actually works for other people)
 6. Click "Create Space" — it gives you a git URL like
    `https://huggingface.co/spaces/<your-username>/image-caption-generator`
@@ -39,46 +50,24 @@ git push space master:main
 If it asks for credentials: use your HF username and an access token
 (not your password) — generate one at huggingface.co → Settings → Access Tokens.
 
-## 3. Add the checkpoint
-
-`best_checkpoint.pth` is git-ignored in this repo (it's large and
-regenerable), so push it separately straight into the Space repo:
-
-```bash
-git clone https://huggingface.co/spaces/<your-username>/image-caption-generator space-repo
-cp best_checkpoint.pth space-repo/
-cd space-repo
-git add best_checkpoint.pth
-git commit -m "Add trained checkpoint"
-git push
-```
-
-(Hugging Face repos use Git LFS automatically for large files over 10MB —
-no extra setup needed.)
-
-## 3b. Restrict the public demo to the fast backends
-
-Free-tier Spaces hardware is CPU-only, no GPU. BLIP-2 (2.7B params)
-falls back to float32 there and takes minutes per image — a bad first
-impression for someone testing the link live. Claude works but costs
-API credits on every visitor's request. Your own trained model and
-BLIP are both small and fast even on CPU, so for a public link, hide
-the other two:
+## 3. Set PUBLIC_DEMO
 
 On the Space page → **Settings → Variables and secrets → New variable**:
 - Name: `PUBLIC_DEMO`
 - Value: `true`
 
-This restricts the "Captioning model" picker to just your trained
-model and BLIP. Leave it unset (or `false`) for local use, where you
-have all four backends including BLIP-2 (fast there, via GPU/Apple
-Silicon fp16) and Claude.
+This hides only the BLIP-3 backend (~18GB, too large for any free tier).
+Your trained model, BLIP, BLIP-2, and Claude all stay available to public
+visitors — see the `PUBLIC_DEMO` comment in `app.py` for the exact memory
+reasoning per backend.
 
 ## 4. Check it built
 
-Open the Space URL — it takes 1-2 minutes to build the first time. If it
-fails, click "Logs" on the Space page; the most common cause is a missing
-package in `requirements.txt` (Spaces installs from that file automatically).
+Open the Space URL — it takes 1-2 minutes to build the first time, plus
+however long the checkpoint/model downloads take on first page load
+(BLIP-2 alone is ~10GB). If it fails, click "Logs" on the Space page; the
+most common cause is a missing package in `requirements.txt` (Spaces
+installs from that file automatically).
 
 ## 5. Put the link in your README
 

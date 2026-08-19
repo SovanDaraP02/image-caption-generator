@@ -158,12 +158,26 @@ def load_blip2() -> tuple[Blip2Processor, Blip2ForConditionalGeneration, torch.d
     else:
         # CPU-only (e.g. free-tier cloud hosting, no GPU/MPS available):
         # fp16 isn't well-supported by CPU kernels, but dynamic int8
-        # quantization is -- measured ~14.6GB (fp32) -> ~4.6GB resident here,
-        # which is the difference between fitting in free-tier hosting memory
-        # or not. Only quantizes nn.Linear layers (the bulk of a transformer's
+        # quantization is -- measured ~14.6GB (fp32) -> ~4.6GB resident here.
+        # Only quantizes nn.Linear layers (the bulk of a transformer's
         # parameters); activations are quantized on the fly per forward call,
         # so inputs stay plain float32 -- no explicit input dtype casting
         # needed, unlike the fp16 GPU/MPS path.
+        #
+        # IMPORTANT: quantize_dynamic() only shrinks *resident* memory after
+        # the model is already loaded -- from_pretrained() itself still has
+        # to materialize the full ~14.6GB fp32 model first, and that peak is
+        # what actually crashes a host with less RAM than that, regardless of
+        # how small the model gets afterward. low_cpu_mem_usage=True streams
+        # weights in via HF's meta-device loading path instead of allocating
+        # the full state dict twice (the default loading path's usual
+        # transient doubling), which measurably lowers that peak -- but the
+        # host still needs several GB free to load this model at all. A host
+        # with, say, ~1GB of RAM will still crash here even with this flag;
+        # this only helps hosts that have enough headroom to begin with (see
+        # DEPLOY_SPACES.md for why Hugging Face Spaces' free CPU-basic tier,
+        # not Streamlit Community Cloud's free tier, is what makes BLIP-2
+        # viable at all in a public deploy).
         engine = next((e for e in torch.backends.quantized.supported_engines if e != "none"), None)
         if engine is None:
             raise RuntimeError(
@@ -171,7 +185,9 @@ def load_blip2() -> tuple[Blip2Processor, Blip2ForConditionalGeneration, torch.d
                 "(torch.backends.quantized.supported_engines is empty)"
             )
         torch.backends.quantized.engine = engine
-        model = Blip2ForConditionalGeneration.from_pretrained(BLIP2_CHECKPOINT, torch_dtype=torch.float32)
+        model = Blip2ForConditionalGeneration.from_pretrained(
+            BLIP2_CHECKPOINT, torch_dtype=torch.float32, low_cpu_mem_usage=True
+        )
         model.eval()
         model = torch.quantization.quantize_dynamic(model, {torch.nn.Linear}, dtype=torch.qint8)
 
@@ -338,15 +354,21 @@ BACKEND_BLIP2 = "BLIP-2 (external pretrained model, quantized on CPU, reference 
 BACKEND_BLIP3 = "BLIP-3 (external pretrained model, experimental, reference only)"
 BACKEND_CLAUDE = "Claude (external pretrained model, most detailed, reference only)"
 
-# PUBLIC_DEMO=true (set as a Space variable on the deployed public link) hides
-# BLIP-3 only now: needs ~18GB just for weights, confirmed to crash the app
-# on Streamlit Community Cloud's free tier. BLIP-2's CPU-only path
-# originally crashed there too (~11GB, plain float32) -- fixed by dynamic
-# int8 quantization on CPU-only devices (see load_blip2()), which measured
-# ~14.6GB -> ~3.3GB resident here, so it's back on a trial basis. Claude
-# stays public regardless: it's a lightweight API call, no heavy local
-# model to load, and costs the deployer nothing extra since visitors must
-# enter their own API key (no ANTHROPIC_API_KEY secret is set for the
+# PUBLIC_DEMO=true (set as a Space variable on the deployed public link)
+# hides BLIP-3 only: needs ~18GB just for weights, with no margin on any
+# free-tier host. BLIP-2 stays in this list on the assumption the host has
+# enough RAM (~16GB-class, e.g. Hugging Face Spaces' free CPU-basic tier --
+# see DEPLOY_SPACES.md) for load_blip2()'s CPU path, which needs ~14.6GB at
+# its peak (loading the full fp32 model, before quantize_dynamic() shrinks
+# it to ~4.6GB resident) -- quantizing after loading does NOT reduce that
+# peak, so it does not by itself make BLIP-2 safe on a smaller host.
+# Streamlit Community Cloud's free tier (~1GB) is NOT enough regardless of
+# this flag -- BLIP-2 crashed there even with quantization (see git history
+# on this file) precisely because of that peak, not because quantization
+# didn't work. If redeploying on a host that small, hide BLIP-2 here too.
+# Claude stays public regardless: it's a lightweight API call, no heavy
+# local model to load, and costs the deployer nothing extra since visitors
+# must enter their own API key (no ANTHROPIC_API_KEY secret is set for the
 # public deploy) -- see caption_image_claude's api_key handling below.
 if os.environ.get("PUBLIC_DEMO", "false").lower() == "true":
     available_backends = [BACKEND_CUSTOM, BACKEND_BLIP, BACKEND_BLIP2, BACKEND_CLAUDE]
@@ -375,9 +397,11 @@ elif backend == BACKEND_BLIP2:
     st.caption(
         "Not trained by me — Salesforce's pretrained BLIP-2 (~2.7B params, language-model backbone), "
         "shown for comparison. Richer captions than BLIP-large. Runs in float16 on GPU/Apple Silicon "
-        "(~6s/image measured locally); on CPU-only hosting (e.g. free-tier cloud) it's dynamically "
-        "quantized to int8 instead (measured ~14.6GB -> ~3.3GB resident locally) so it fits free-tier "
-        "memory — still slower there than with a real GPU/MPS, but no longer crashes."
+        "(~6s/image measured locally); on CPU-only hosting it's dynamically quantized to int8 instead "
+        "(measured ~14.6GB peak while loading -> ~3.3GB resident afterward locally) — still slower there "
+        "than with a real GPU/MPS. That ~14.6GB load-time peak needs a host with enough RAM to begin "
+        "with (this Space's tier, not Streamlit Community Cloud's much smaller free tier — see "
+        "DEPLOY_SPACES.md); quantization alone doesn't lower that peak, only the size after loading."
     )
 elif backend == BACKEND_BLIP3:
     st.caption(

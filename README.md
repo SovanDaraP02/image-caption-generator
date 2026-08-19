@@ -23,33 +23,45 @@ intended use, training data, and limitations in the standard model-card
 format.
 
 ## Live demo
-[Link to Streamlit Community Cloud deployment — add once deployed, see `DEPLOY_STREAMLIT.md`
-(or `DEPLOY_SPACES.md` for Hugging Face Spaces instead)]
+[Link to Hugging Face Spaces deployment — add once deployed, see
+`DEPLOY_SPACES.md` (or `DEPLOY_STREAMLIT.md` for Streamlit Community
+Cloud instead, a simpler setup that can't run the BLIP-2 backend — see
+that file for why)]
 
-The Streamlit app (`app.py`) offers three captioning backends,
+The Streamlit app (`app.py`) offers five captioning backends,
 selectable in the UI. **The model this project is actually about is
-the custom one** — the ResNet + Bahdanau attention + LSTM decoder
-described below, designed, trained, and evaluated from scratch on
-Flickr8k/COCO. It's the default, and it's the one with real BLEU/
-METEOR/CIDEr numbers in the Results section. The other two are
-off-the-shelf pretrained models, included so the live demo still gives
-a good result on photos outside Flickr8k's narrow distribution — they
-are not part of this project's ML work, and the UI labels them as such.
+the custom one** — the CLIP ViT-B/32 + Bahdanau attention + LSTM
+decoder described below, designed, trained, and evaluated from scratch
+on Flickr8k/COCO. It's the default, and it's the one with real BLEU/
+CIDEr numbers in the Results section. The other four are off-the-shelf
+pretrained models, included so the live demo still gives a good result
+on photos outside COCO/Flickr8k's distribution — they are not part of
+this project's ML work, and the UI labels them as such.
 
 - **🎓 My trained model (default)** — this project's own architecture.
   Shorter, more generic captions than the options below, and
   occasional hallucination on out-of-distribution scenes — an honest,
-  expected consequence of training on a few thousand images instead of
-  hundreds of millions (see Limitations).
+  expected consequence of training on ~113k images instead of hundreds
+  of millions (see Limitations).
 - **BLIP (external, reference only)** — Salesforce's
-  `blip-image-captioning-large`, pretrained on ~14M image-text pairs.
-  Short but accurate one-line captions, free, runs locally, no API key
-  needed.
+  `blip-image-captioning-large` (~470M params). Short but accurate
+  one-line captions, fast even on CPU, free.
+- **BLIP-2 (external, reference only)** — Salesforce's
+  `blip2-opt-2.7b` (~2.7B params, language-model backbone). Richer
+  captions than plain BLIP. Needs a host with enough RAM to load
+  (~14.6GB peak on CPU before quantization shrinks it to ~3.3GB
+  resident) — see `DEPLOY_SPACES.md` for why this only runs reliably
+  on Hugging Face Spaces' free tier, not Streamlit Community Cloud's.
+- **BLIP-3/xGen-MM (external, reference only)** — Salesforce's
+  ~4.6B-param, Phi-3-backboned model. Instruction-tuned, so it can
+  attempt the same detailed prompt as Claude below, with weaker
+  results. ~18GB download; hidden on the public deploy regardless of
+  host (`PUBLIC_DEMO=true`) since no free tier has the RAM for it.
 - **Claude (external, reference only)** — calls the Anthropic API with
-  the image and a prompt asking for a full paragraph naming every
-  object, its color/material, spatial position, and the environment
-  itself. The most detailed option, and the only one that resembles
-  hand-written photo-catalog description — caption models (BLIP, and
+  a prompt asking for a full paragraph naming every object, its
+  color/material, spatial position, and the environment itself. The
+  most detailed option, and the only one that resembles hand-written
+  photo-catalog description — caption models (BLIP/BLIP-2/BLIP-3, and
   this project's own model) are trained on short reference captions
   and structurally cannot produce that regardless of how much they're
   trained; instruction-tuned vision-language models are a different
@@ -57,8 +69,8 @@ are not part of this project's ML work, and the UI labels them as such.
   an environment variable before launch); costs a small amount per
   image.
 
-All three backends support uploading one or multiple images at once;
-each gets its own caption in the results list.
+All backends support uploading one or multiple images at once; each
+gets its own caption in the results list.
 
 ## Architecture
 
