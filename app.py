@@ -348,30 +348,31 @@ def caption_image_claude(client: anthropic.Anthropic, image: Image.Image) -> str
 st.set_page_config(page_title="Image Caption Generator", page_icon="🖼️")
 st.title("🖼️ Multimodal Image Caption Generator")
 
-BACKEND_CUSTOM = "🎓 My trained model (ResNet + attention + LSTM, built from scratch)"
+BACKEND_CUSTOM = "🎓 My trained model (CLIP encoder + attention + LSTM, built from scratch)"
 BACKEND_BLIP = "BLIP (external pretrained model, reference only)"
 BACKEND_BLIP2 = "BLIP-2 (external pretrained model, quantized on CPU, reference only)"
 BACKEND_BLIP3 = "BLIP-3 (external pretrained model, experimental, reference only)"
 BACKEND_CLAUDE = "Claude (external pretrained model, most detailed, reference only)"
 
-# PUBLIC_DEMO=true (set as a Space variable on the deployed public link)
-# hides BLIP-3 only: needs ~18GB just for weights, with no margin on any
-# free-tier host. BLIP-2 stays in this list on the assumption the host has
-# enough RAM (~16GB-class, e.g. Hugging Face Spaces' free CPU-basic tier --
-# see DEPLOY_SPACES.md) for load_blip2()'s CPU path, which needs ~14.6GB at
-# its peak (loading the full fp32 model, before quantize_dynamic() shrinks
-# it to ~4.6GB resident) -- quantizing after loading does NOT reduce that
-# peak, so it does not by itself make BLIP-2 safe on a smaller host.
-# Streamlit Community Cloud's free tier (~1GB) is NOT enough regardless of
-# this flag -- BLIP-2 crashed there even with quantization (see git history
-# on this file) precisely because of that peak, not because quantization
-# didn't work. If redeploying on a host that small, hide BLIP-2 here too.
+# PUBLIC_DEMO=true (set as a secret on the deployed public link) hides
+# BLIP-2 and BLIP-3, keeping the public demo to backends that actually run
+# on Streamlit Community Cloud's free tier (~1GB RAM):
+# - BLIP-3: ~18GB just for weights, no free tier has room for that.
+# - BLIP-2: load_blip2()'s CPU path needs ~14.6GB at its *peak* (loading
+#   the full fp32 model, before quantize_dynamic() shrinks it to ~4.6GB
+#   resident) -- quantizing after loading does not reduce that peak, so it
+#   does not by itself make BLIP-2 safe on a ~1GB host. Confirmed by an
+#   actual crash in production after quantization shipped (see git history
+#   on this file) -- not a hypothetical.
+# Both are still available locally (PUBLIC_DEMO unset) and would fit a
+# larger host (~16GB-class, e.g. Hugging Face Spaces' paid compute tier --
+# see DEPLOY_SPACES.md) if this project is ever redeployed there instead.
 # Claude stays public regardless: it's a lightweight API call, no heavy
 # local model to load, and costs the deployer nothing extra since visitors
 # must enter their own API key (no ANTHROPIC_API_KEY secret is set for the
 # public deploy) -- see caption_image_claude's api_key handling below.
 if os.environ.get("PUBLIC_DEMO", "false").lower() == "true":
-    available_backends = [BACKEND_CUSTOM, BACKEND_BLIP, BACKEND_BLIP2, BACKEND_CLAUDE]
+    available_backends = [BACKEND_CUSTOM, BACKEND_BLIP, BACKEND_CLAUDE]
 else:
     available_backends = [BACKEND_CUSTOM, BACKEND_BLIP, BACKEND_BLIP2, BACKEND_BLIP3, BACKEND_CLAUDE]
 
@@ -400,8 +401,8 @@ elif backend == BACKEND_BLIP2:
         "(~6s/image measured locally); on CPU-only hosting it's dynamically quantized to int8 instead "
         "(measured ~14.6GB peak while loading -> ~3.3GB resident afterward locally) — still slower there "
         "than with a real GPU/MPS. That ~14.6GB load-time peak needs a host with enough RAM to begin "
-        "with (this Space's tier, not Streamlit Community Cloud's much smaller free tier — see "
-        "DEPLOY_SPACES.md); quantization alone doesn't lower that peak, only the size after loading."
+        "with; quantization alone doesn't lower that peak, only the size after loading, which is why "
+        "this backend is local-only/reference and hidden on the public deploy (see README)."
     )
 elif backend == BACKEND_BLIP3:
     st.caption(

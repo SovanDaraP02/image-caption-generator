@@ -23,21 +23,25 @@ intended use, training data, and limitations in the standard model-card
 format.
 
 ## Live demo
-[Link to Hugging Face Spaces deployment — add once deployed, see
-`DEPLOY_SPACES.md` (or `DEPLOY_STREAMLIT.md` for Streamlit Community
-Cloud instead, a simpler setup that can't run the BLIP-2 backend — see
-that file for why)]
+[Link to Streamlit Community Cloud deployment — add once deployed, see
+`DEPLOY_STREAMLIT.md`]
 
-The Streamlit app (`app.py`) offers five captioning backends,
-selectable in the UI. **The model this project is actually about is
-the custom one** — the CLIP ViT-B/32 + Bahdanau attention + LSTM
-decoder described below, designed, trained, and evaluated from scratch
-on Flickr8k/COCO. It's the default, and it's the one with real BLEU/
-CIDEr numbers in the Results section. The other four are off-the-shelf
-pretrained models, included so the live demo still gives a good result
-on photos outside COCO/Flickr8k's distribution — they are not part of
-this project's ML work, and the UI labels them as such.
+The Streamlit app (`app.py`) offers five captioning backends locally,
+selectable in the UI — but the **public link only exposes three**
+(`PUBLIC_DEMO=true`, see `app.py`): the deployment host (Streamlit
+Community Cloud, free tier, ~1GB RAM) can't fit the two heaviest
+backends. This is a deliberate, documented trade-off, not an
+oversight — see "Why only three backends are public" below.
 
+**The model this project is actually about is the custom one** — the
+CLIP ViT-B/32 + Bahdanau attention + LSTM decoder described below,
+designed, trained, and evaluated from scratch on Flickr8k/COCO. It's
+the default, and it's the one with real BLEU/CIDEr numbers in the
+Results section. The others are off-the-shelf pretrained models,
+included for comparison — they are not part of this project's ML
+work, and the UI labels them as such.
+
+**Public on the live link:**
 - **🎓 My trained model (default)** — this project's own architecture.
   Shorter, more generic captions than the options below, and
   occasional hallucination on out-of-distribution scenes — an honest,
@@ -46,17 +50,6 @@ this project's ML work, and the UI labels them as such.
 - **BLIP (external, reference only)** — Salesforce's
   `blip-image-captioning-large` (~470M params). Short but accurate
   one-line captions, fast even on CPU, free.
-- **BLIP-2 (external, reference only)** — Salesforce's
-  `blip2-opt-2.7b` (~2.7B params, language-model backbone). Richer
-  captions than plain BLIP. Needs a host with enough RAM to load
-  (~14.6GB peak on CPU before quantization shrinks it to ~3.3GB
-  resident) — see `DEPLOY_SPACES.md` for why this only runs reliably
-  on Hugging Face Spaces' free tier, not Streamlit Community Cloud's.
-- **BLIP-3/xGen-MM (external, reference only)** — Salesforce's
-  ~4.6B-param, Phi-3-backboned model. Instruction-tuned, so it can
-  attempt the same detailed prompt as Claude below, with weaker
-  results. ~18GB download; hidden on the public deploy regardless of
-  host (`PUBLIC_DEMO=true`) since no free tier has the RAM for it.
 - **Claude (external, reference only)** — calls the Anthropic API with
   a prompt asking for a full paragraph naming every object, its
   color/material, spatial position, and the environment itself. The
@@ -66,18 +59,42 @@ this project's ML work, and the UI labels them as such.
   and structurally cannot produce that regardless of how much they're
   trained; instruction-tuned vision-language models are a different
   task. Requires an `ANTHROPIC_API_KEY` (entered in the UI or set as
-  an environment variable before launch); costs a small amount per
-  image.
+  an environment variable before launch, one per visitor); costs a
+  small amount per image, paid by whoever enters the key — not the
+  deployer, and no key is preconfigured on the public deploy.
 
-All backends support uploading one or multiple images at once; each
-gets its own caption in the results list.
+**Local-only (run `streamlit run app.py` yourself to try these):**
+- **BLIP-2 (external, reference only)** — Salesforce's
+  `blip2-opt-2.7b` (~2.7B params). Richer captions than plain BLIP.
+  Needs ~14.6GB of RAM at its peak just to load on CPU (quantization
+  only shrinks it *after* loading, to ~3.3GB resident) — confirmed by
+  an actual crash on the public deploy, not a hypothetical. See
+  `MODEL_CARD.md` and the `PUBLIC_DEMO` comment in `app.py` for the
+  full memory breakdown.
+- **BLIP-3/xGen-MM (external, reference only)** — Salesforce's
+  ~4.6B-param, Phi-3-backboned model. Instruction-tuned, so it can
+  attempt the same detailed prompt as Claude, with weaker results.
+  ~18GB download; no free hosting tier has the RAM for it.
+
+### Why only three backends are public
+
+Free hosting tiers have real memory limits, and this project would
+rather run a smaller, honestly-labeled public demo than a flashy one
+that crashes for visitors. `DEPLOY_SPACES.md` documents a path to a
+BLIP-2-capable public deploy (Hugging Face Spaces, ~16GB RAM) for
+anyone who wants to extend this — it needs Spaces' paid/verified
+compute tier, which this project's current deploy doesn't use.
+
+All public backends support uploading one or multiple images at once;
+each gets its own caption in the results list.
 
 ## Architecture
 
 ```
 Input image (3×224×224)
-    → ResNet-50/101/152 encoder (frozen, pretrained on ImageNet)
-    → Feature map (49 regions × 2048-d)
+    → CLIP ViT-B/32 encoder (frozen, fine-tuned last block --
+      or swappable for ResNet-50/101/152, see Design decisions)
+    → Feature map (49 regions × 768-d for CLIP, 2048-d for ResNet)
     → Attention mechanism ↔ LSTM decoder (word-by-word, with attention
       recomputed at every step)
     → Generated caption
@@ -85,8 +102,8 @@ Input image (3×224×224)
 
 ```mermaid
 flowchart LR
-    IMG["Image\n3×224×224"] --> ENC["EncoderCNN\n(ResNet-50, frozen)"]
-    ENC --> FEAT["Feature map\n49 regions × 2048-d"]
+    IMG["Image\n3×224×224"] --> ENC["EncoderCLIP\n(CLIP ViT-B/32, fine-tuned last block)"]
+    ENC --> FEAT["Feature map\n49 regions × 768-d"]
     FEAT --> ATT["Attention\nBahdanau, per timestep"]
     HPREV["h(t-1)"] --> ATT
     ATT --> CTX["Context vector z(t)"]
