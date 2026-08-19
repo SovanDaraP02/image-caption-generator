@@ -12,7 +12,7 @@ Given a photo, the model writes a caption for it and learns which part of the im
 New here? [`WRITEUP.md`](./WRITEUP.md) is a short version of the Results section below. [`MODEL_CARD.md`](./MODEL_CARD.md) covers intended use, training data, and limitations in the standard model-card format.
 
 ## Live demo
-[Link to Streamlit Community Cloud deployment — add once deployed, see `DEPLOY_STREAMLIT.md`]
+https://image-caption-generator-bvudeamams3gdsghreqqjg.streamlit.app/
 
 The app (`app.py`) has five captioning backends when you run it locally, but the public link only shows three (set by `PUBLIC_DEMO=true`, see `app.py`). The free hosting tier is ~1GB RAM, and two of the backends need more than that to even load. See "Why only three backends are public" below.
 
