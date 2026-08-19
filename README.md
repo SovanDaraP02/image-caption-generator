@@ -147,6 +147,19 @@ further 6-epoch fine-tuning phase warm-started from that checkpoint
 --finetune-from <checkpoint>` — see "Three ways to train" below.
 METEOR skipped (see Engineering notes).
 
+Per-epoch logs from that original 113k run weren't captured at the
+time (they printed to a terminal, not a file), so here's a real,
+smaller demonstration run instead: same production training loop
+(`train_one_epoch`/`validate`), same CLIP-frozen architecture, 10,000
+COCO images, 8 epochs, run on the same M4 Pro:
+
+![training loss curve: train and validation loss both decreasing smoothly over 8 epochs, from ~4.36/3.24 to ~2.77/2.51](assets/training_curve_demo.png)
+
+Both curves fall smoothly with no divergence, the shape you'd want to
+see, though this smaller/shorter run's absolute loss values aren't
+directly comparable to the full 113k/16-epoch run's `val_loss=2.1940`
+above.
+
 Five checkpoints total, kept for comparison (`best_checkpoint_flickr8k.pth`,
 `best_checkpoint_coco_50k.pth`, `best_checkpoint_coco_113k_resnet.pth`,
 `best_checkpoint_coco_clip_frozen.pth`, and the current fine-tuned one):

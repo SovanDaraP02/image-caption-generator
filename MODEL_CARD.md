@@ -30,6 +30,7 @@ Following the structure of Mitchell et al., *Model Cards for Model Reporting* (2
 - LR halved on a 2-epoch validation-loss plateau; training stopped after 4 epochs with no improvement. Best checkpoint by validation loss, not final epoch.
 - Hardware: local Apple M4 Pro (MPS backend), no cloud GPU for this final run. ~80 min/epoch at 113k images.
 - Full details, including the three interchangeable training environments (Colab / Kaggle / local) and real problems hit running this unattended for hours, are in the main [README](./README.md#three-ways-to-train).
+- Per-epoch loss curve: the original 113k run's logs weren't captured, so the [README's Results section](./README.md#results) includes a real curve from a smaller 10k-image/8-epoch demonstration run instead, same training loop and architecture, clearly labeled as such.
 
 ## Evaluation
 
