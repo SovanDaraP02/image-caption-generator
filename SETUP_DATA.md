@@ -1,8 +1,6 @@
 # Getting Flickr8k onto Colab (Day 1 task)
 
-This sandbox can't reach Kaggle or Hugging Face, so this step has to happen
-on Colab itself, where you have full internet access. Two options — pick
-whichever is less friction for you.
+This sandbox can't reach Kaggle or Hugging Face, so this step has to happen on Colab itself, where you have full internet access. Two options below — pick whichever is easier for you.
 
 ## Option A: Hugging Face mirror (no API key needed — easiest)
 
